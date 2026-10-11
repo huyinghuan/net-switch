@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:netfx="http://wixtoolset.org/schemas/v4/wxs/netfx">
+  <Package Name="网络一键切换器"
+           Manufacturer="Local Tools"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="{F69387B4-31F8-463C-BC43-4D414E1C3E86}"
+           Language="2052"
+           Codepage="65001"
+           Scope="perMachine"
+           InstallerVersion="500"
+           Compressed="yes">
+
+    <SummaryInformation Description="网络一键切换器安装程序"
+                        Manufacturer="Local Tools"
+                        Codepage="936" />
+
+    <MajorUpgrade DowngradeErrorMessage="已安装相同或更新版本的网络一键切换器。" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <netfx:DotNetCompatibilityCheck Id="DotNetDesktopRuntimeCheck"
+                                    Property="DOTNETRUNTIMECHECK"
+                                    RuntimeType="desktop"
+                                    Platform="x64"
+                                    Version="8.0.0"
+                                    RollForward="latestPatch" />
+    <Launch Condition="Installed OR DOTNETRUNTIMECHECK = 0"
+            Message="需要安装 .NET 8 Desktop Runtime (x64)。请从 https://dotnet.microsoft.com/download/dotnet/8.0 下载并安装后重试。" />
+
+    <Property Id="ARPCONTACT" Value="Local Tools" />
+    <Property Id="ARPURLINFOABOUT" Value="https://dotnet.microsoft.com/" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="NetSwitcher">
+        <Component Id="MainExecutable" Guid="*">
+          <File Id="NetSwitcherExe"
+                Source="!(bindpath.publish)\NetSwitcher.exe"
+                KeyPath="yes">
+            <Shortcut Id="ApplicationStartMenuShortcut"
+                      Directory="ProgramMenuFolder"
+                      Name="网络一键切换器"
+                      Description="一键切换有线与 Wi-Fi 上网出口"
+                      WorkingDirectory="INSTALLFOLDER"
+                      Advertise="yes" />
+          </File>
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="网络一键切换器" Level="1">
+      <ComponentRef Id="MainExecutable" />
+    </Feature>
+  </Package>
+</Wix>

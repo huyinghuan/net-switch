@@ -1,0 +1,26 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <OutputName>NetSwitcher-Setup-$(ProductVersion)-x64</OutputName>
+    <OutputPath>..\artifacts\</OutputPath>
+    <IntermediateOutputPath>obj\$(Configuration)\</IntermediateOutputPath>
+    <DefineConstants>ProductVersion=$(ProductVersion)</DefineConstants>
+    <DebugType>none</DebugType>
+    <DefaultCompressionLevel>high</DefaultCompressionLevel>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Netfx.wixext" Version="5.0.2" />
+    <BindPath Include="$(PublishDir)" BindName="publish" />
+  </ItemGroup>
+
+  <Target Name="ValidateInstallerInputs" BeforeTargets="Build">
+    <Error Condition="'$(ProductVersion)' == ''" Text="ProductVersion 未设置。请使用根目录的 build-msi.cmd 构建。" />
+    <Error Condition="'$(PublishDir)' == '' Or !Exists('$(PublishDir)\NetSwitcher.exe')"
+           Text="未找到框架依赖版 NetSwitcher.exe。请使用根目录的 build-msi.cmd 构建。" />
+  </Target>
+
+</Project>
