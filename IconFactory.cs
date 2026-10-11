@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Runtime.InteropServices;
 
 namespace NetSwitcher
 {
@@ -12,15 +13,9 @@ namespace NetSwitcher
         public static readonly Color WiredColor = ColorTranslator.FromHtml("#4A9EFF");
         public static readonly Color WifiColor = ColorTranslator.FromHtml("#A78BFA");
 
-        // Icon.FromHandle 拿到的是位图的 GDI 句柄，原始 Bitmap 必须存活，
-        // 否则被 GC 回收后托盘图标会变成空白。这里集中保活。
-        private static readonly System.Collections.Generic.List<Bitmap> KeepAlive =
-            new System.Collections.Generic.List<Bitmap>();
-
         public static Icon Create(Color accent)
         {
-            var bmp = new Bitmap(64, 64);
-            KeepAlive.Add(bmp);
+            using var bmp = new Bitmap(64, 64);
             using (var g = Graphics.FromImage(bmp))
             {
                 g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -47,8 +42,20 @@ namespace NetSwitcher
                     });
                 }
             }
-            return Icon.FromHandle(bmp.GetHicon());
+            var handle = bmp.GetHicon();
+            try
+            {
+                using var borrowed = Icon.FromHandle(handle);
+                return (Icon)borrowed.Clone();
+            }
+            finally
+            {
+                DestroyIcon(handle);
+            }
         }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool DestroyIcon(IntPtr handle);
 
         public static GraphicsPath RoundedRect(Rectangle rect, int radius)
         {

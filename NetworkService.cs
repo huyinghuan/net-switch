@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
@@ -257,32 +258,62 @@ namespace NetSwitcher
 
             var sb = new StringBuilder();
             sb.AppendLine("[Console]::OutputEncoding=[System.Text.Encoding]::UTF8");
-            sb.AppendLine("$ErrorActionPreference='SilentlyContinue'");
+            sb.AppendLine("$ErrorActionPreference='Stop'");
 
             // 确保目标网卡是启用的（硬隔离模式下它可能上次被禁用过）
-            sb.AppendLine("Enable-NetAdapter -Name '" + Esc(target.Name) + "' -Confirm:$false");
+            sb.AppendLine("$targetAdapter=Get-NetAdapter | Where-Object { $_.Name -eq '" + Esc(target.Name) + "' } | Select-Object -First 1");
+            sb.AppendLine("if($null -eq $targetAdapter){ throw '找不到目标网卡' }");
+            sb.AppendLine("if($targetAdapter.Status -eq 'Disabled'){ $targetAdapter | Enable-NetAdapter -Confirm:$false }");
+            sb.AppendLine("$targetV4=Get-NetIPInterface -InterfaceIndex " + target.IfIndex + " -AddressFamily IPv4");
 
             // 跃点数：目标最低，另一张抬高（仍保留，作为备用出口）
-            sb.AppendLine("Set-NetIPInterface -InterfaceIndex " + target.IfIndex + " -AddressFamily IPv4 -InterfaceMetric " + PreferredMetric);
-            sb.AppendLine("Set-NetIPInterface -InterfaceIndex " + target.IfIndex + " -AddressFamily IPv6 -InterfaceMetric " + PreferredMetric);
+            sb.AppendLine("$targetV4 | Set-NetIPInterface -InterfaceMetric " + PreferredMetric);
+            sb.AppendLine("$targetV6=Get-NetIPInterface -InterfaceIndex " + target.IfIndex + " -AddressFamily IPv6 -ErrorAction SilentlyContinue");
+            sb.AppendLine("if($targetV6){ $targetV6 | Set-NetIPInterface -InterfaceMetric " + PreferredMetric + " }");
 
-            if (other != null && other.IfIndex >= 0 && other != target)
+            if (other != null && other != target)
             {
-                sb.AppendLine("Set-NetIPInterface -InterfaceIndex " + other.IfIndex + " -AddressFamily IPv4 -InterfaceMetric " + SecondaryMetric);
-                sb.AppendLine("Set-NetIPInterface -InterfaceIndex " + other.IfIndex + " -AddressFamily IPv6 -InterfaceMetric " + SecondaryMetric);
+                if (!hardIsolate)
+                {
+                    sb.AppendLine("$otherAdapter=Get-NetAdapter | Where-Object { $_.Name -eq '" + Esc(other.Name) + "' } | Select-Object -First 1");
+                    sb.AppendLine("if($null -eq $otherAdapter){ throw '找不到备用网卡' }");
+                    sb.AppendLine("if($otherAdapter.Status -eq 'Disabled'){ $otherAdapter | Enable-NetAdapter -Confirm:$false }");
+                }
+                if (other.IfIndex >= 0)
+                {
+                    sb.AppendLine("$otherV4=Get-NetIPInterface -InterfaceIndex " + other.IfIndex + " -AddressFamily IPv4");
+                    sb.AppendLine("$otherV4 | Set-NetIPInterface -InterfaceMetric " + SecondaryMetric);
+                    sb.AppendLine("$otherV6=Get-NetIPInterface -InterfaceIndex " + other.IfIndex + " -AddressFamily IPv6 -ErrorAction SilentlyContinue");
+                    sb.AppendLine("if($otherV6){ $otherV6 | Set-NetIPInterface -InterfaceMetric " + SecondaryMetric + " }");
+                }
             }
 
             if (hardIsolate && other != null && other != target)
             {
                 sb.AppendLine("Start-Sleep -Milliseconds 150");
-                sb.AppendLine("Disable-NetAdapter -Name '" + Esc(other.Name) + "' -Confirm:$false");
+                sb.AppendLine("$otherAdapter=Get-NetAdapter | Where-Object { $_.Name -eq '" + Esc(other.Name) + "' } | Select-Object -First 1");
+                sb.AppendLine("if($null -eq $otherAdapter){ throw '找不到要隔离的网卡' }");
+                sb.AppendLine("$otherAdapter | Disable-NetAdapter -Confirm:$false");
+                sb.AppendLine("$otherState=Get-NetAdapter | Where-Object { $_.Name -eq '" + Esc(other.Name) + "' } | Select-Object -First 1");
+                sb.AppendLine("if($otherState.Status -ne 'Disabled'){ throw '未能禁用另一张网卡' }");
             }
 
-            RunPowerShell(sb.ToString());
+            var execution = RunPowerShell(sb.ToString());
+            if (!execution.Success)
+            {
+                message = execution.TimedOut
+                    ? "切换超时，系统网络服务可能没有响应。"
+                    : "切换命令执行失败：" + ShortError(execution.StandardError);
+                return false;
+            }
 
             // 回读校验
             var check = Enumerate();
-            RefreshMetrics(check);
+            if (!RefreshMetrics(check))
+            {
+                message = "切换命令已执行，但无法回读网卡跃点数进行确认。";
+                return false;
+            }
             var verify = check.FirstOrDefault(a => a.IfIndex == target.IfIndex);
             if (verify == null || verify.Metric != PreferredMetric)
             {
@@ -290,20 +321,50 @@ namespace NetSwitcher
                 return false;
             }
 
-            message = hardIsolate
+            if (!hardIsolate && other != null && other.IfIndex >= 0)
+            {
+                var otherVerify = check.FirstOrDefault(a => a.IfIndex == other.IfIndex);
+                if (otherVerify == null || otherVerify.Metric != SecondaryMetric)
+                {
+                    message = "目标出口已设置，但未能确认备用网卡的跃点数。";
+                    return false;
+                }
+            }
+
+            message = hardIsolate && other != null
                 ? "已切换到「" + target.Name + "」，另一张网卡已禁用。"
-                : "已切换到「" + target.Name + "」，两张网卡都保持连接。";
+                : !hardIsolate && other != null
+                    ? "已切换到「" + target.Name + "」，两张网卡都保持启用。"
+                    : "已切换到「" + target.Name + "」。";
             return true;
         }
 
         /// <summary>单独启用 / 禁用某张网卡（取消硬隔离时用于恢复）。</summary>
-        public static void SetAdapterEnabled(AdapterInfo adapter, bool enabled)
+        public static bool SetAdapterEnabled(AdapterInfo adapter, bool enabled, out string message)
         {
-            if (adapter == null) return;
+            message = "";
+            if (adapter == null)
+            {
+                message = "没有找到要操作的网卡。";
+                return false;
+            }
             var cmd = enabled ? "Enable-NetAdapter" : "Disable-NetAdapter";
-            RunPowerShell("[Console]::OutputEncoding=[System.Text.Encoding]::UTF8\n" +
-                          "$ErrorActionPreference='SilentlyContinue'\n" +
-                          cmd + " -Name '" + Esc(adapter.Name) + "' -Confirm:$false");
+            var invalidStateCheck = enabled
+                ? "if($state.Status -eq 'Disabled'){ throw '网卡仍处于禁用状态' }"
+                : "if($state.Status -ne 'Disabled'){ throw '网卡未被禁用' }";
+            var result = RunPowerShell("[Console]::OutputEncoding=[System.Text.Encoding]::UTF8\n" +
+                          "$ErrorActionPreference='Stop'\n" +
+                          "$adapter=Get-NetAdapter | Where-Object { $_.Name -eq '" + Esc(adapter.Name) + "' } | Select-Object -First 1\n" +
+                          "if($null -eq $adapter){ throw '找不到网卡' }\n" +
+                          "$adapter | " + cmd + " -Confirm:$false\n" +
+                          "$state=Get-NetAdapter | Where-Object { $_.Name -eq '" + Esc(adapter.Name) + "' } | Select-Object -First 1\n" +
+                          invalidStateCheck);
+            if (result.Success) return true;
+
+            message = result.TimedOut
+                ? "操作网卡「" + adapter.Name + "」超时。"
+                : "操作网卡「" + adapter.Name + "」失败：" + ShortError(result.StandardError);
+            return false;
         }
 
         #endregion
@@ -311,14 +372,17 @@ namespace NetSwitcher
         #region 跃点数读取
 
         /// <summary>通过 PowerShell 读取每张网卡的接口跃点数与默认网关路由跃点数。</summary>
-        public static void RefreshMetrics(List<AdapterInfo> list)
+        public static bool RefreshMetrics(List<AdapterInfo> list)
         {
             const string script =
                 "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8\n" +
-                "$ErrorActionPreference='SilentlyContinue'\n" +
+                "$ErrorActionPreference='Stop'\n" +
                 "$routes=@(Get-NetRoute -DestinationPrefix '0.0.0.0/0')\n" +
                 "$rm=@{}\n" +
-                "foreach($r in $routes){ $rm[[string]$r.InterfaceIndex]=[int]$r.RouteMetric }\n" +
+                "foreach($r in $routes){\n" +
+                "  $key=[string]$r.InterfaceIndex; $value=[int]$r.RouteMetric\n" +
+                "  if(!$rm.ContainsKey($key) -or $value -lt $rm[$key]){ $rm[$key]=$value }\n" +
+                "}\n" +
                 "$out=@()\n" +
                 "foreach($i in @(Get-NetIPInterface -AddressFamily IPv4)){\n" +
                 "  $m=0\n" +
@@ -327,8 +391,9 @@ namespace NetSwitcher
                 "}\n" +
                 "$out | ConvertTo-Json -Compress";
 
-            var raw = RunPowerShell(script);
-            if (string.IsNullOrWhiteSpace(raw)) return;
+            var execution = RunPowerShell(script);
+            var raw = execution.StandardOutput;
+            if (!execution.Success || string.IsNullOrWhiteSpace(raw)) return false;
 
             var map = new Dictionary<int, int[]>();
             try
@@ -345,7 +410,7 @@ namespace NetSwitcher
             }
             catch
             {
-                return;
+                return false;
             }
 
             foreach (var a in list)
@@ -356,6 +421,7 @@ namespace NetSwitcher
                     a.RouteMetric = v[1];
                 }
             }
+            return true;
         }
 
         private static void AddNode(JsonElement el, Dictionary<int, int[]> map)
@@ -374,11 +440,23 @@ namespace NetSwitcher
 
         private static string Esc(string name) => (name ?? "").Replace("'", "''");
 
-        private static string RunPowerShell(string script)
+        private sealed class PowerShellResult
+        {
+            public bool Success { get; set; }
+            public bool TimedOut { get; set; }
+            public int ExitCode { get; set; } = -1;
+            public string StandardOutput { get; set; } = "";
+            public string StandardError { get; set; } = "";
+        }
+
+        private static PowerShellResult RunPowerShell(string script)
         {
             try
             {
-                var psi = new ProcessStartInfo("powershell.exe")
+                var powerShellPath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.System),
+                    "WindowsPowerShell", "v1.0", "powershell.exe");
+                var psi = new ProcessStartInfo(powerShellPath)
                 {
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
@@ -395,15 +473,54 @@ namespace NetSwitcher
                 psi.ArgumentList.Add(script);
 
                 using var p = Process.Start(psi);
-                if (p == null) return "";
+                if (p == null)
+                    return new PowerShellResult { StandardError = "无法启动 PowerShell。" };
+
                 var stdout = p.StandardOutput.ReadToEndAsync();
-                p.WaitForExit(60000);
-                return stdout.GetAwaiter().GetResult();
+                var stderr = p.StandardError.ReadToEndAsync();
+                if (!p.WaitForExit(60000))
+                {
+                    try { p.Kill(true); } catch { }
+                    if (!p.WaitForExit(5000))
+                    {
+                        return new PowerShellResult
+                        {
+                            TimedOut = true,
+                            StandardError = "PowerShell 超时且无法终止。"
+                        };
+                    }
+
+                    return new PowerShellResult
+                    {
+                        TimedOut = true,
+                        ExitCode = p.ExitCode,
+                        StandardOutput = stdout.GetAwaiter().GetResult(),
+                        StandardError = stderr.GetAwaiter().GetResult()
+                    };
+                }
+
+                var output = stdout.GetAwaiter().GetResult();
+                var error = stderr.GetAwaiter().GetResult();
+                return new PowerShellResult
+                {
+                    Success = p.ExitCode == 0,
+                    ExitCode = p.ExitCode,
+                    StandardOutput = output,
+                    StandardError = error
+                };
             }
-            catch
+            catch (Exception ex)
             {
-                return "";
+                return new PowerShellResult { StandardError = ex.Message };
             }
+        }
+
+        private static string ShortError(string error)
+        {
+            if (string.IsNullOrWhiteSpace(error)) return "未返回具体原因。";
+            var line = error.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(line)) return "未返回具体原因。";
+            return line.Length <= 180 ? line : line.Substring(0, 180) + "…";
         }
 
         public static string FormatSpeed(double bytesPerSecond)

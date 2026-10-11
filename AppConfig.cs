@@ -41,15 +41,25 @@ namespace NetSwitcher
 
         public void Save()
         {
+            var tempPath = ConfigPath + ".tmp";
             try
             {
                 Directory.CreateDirectory(ConfigDir);
                 var options = new JsonSerializerOptions { WriteIndented = true };
-                File.WriteAllText(ConfigPath, JsonSerializer.Serialize(this, options));
+                File.WriteAllText(tempPath, JsonSerializer.Serialize(this, options));
+                File.Move(tempPath, ConfigPath, true);
             }
             catch
             {
                 // 保存失败不影响主功能
+                try
+                {
+                    if (File.Exists(tempPath)) File.Delete(tempPath);
+                }
+                catch
+                {
+                    // 临时文件清理失败时不再抛出
+                }
             }
         }
     }
