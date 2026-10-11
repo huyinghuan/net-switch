@@ -15,7 +15,8 @@
                         Manufacturer="Local Tools"
                         Codepage="936" />
 
-    <MajorUpgrade DowngradeErrorMessage="已安装相同或更新版本的网络一键切换器。" />
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="已安装更新版本的网络一键切换器。" />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
     <netfx:DotNetCompatibilityCheck Id="DotNetDesktopRuntimeCheck"

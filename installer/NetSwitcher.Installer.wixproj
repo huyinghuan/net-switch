@@ -10,6 +10,7 @@
     <DebugType>none</DebugType>
     <DefaultCompressionLevel>high</DefaultCompressionLevel>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <SuppressIces>ICE61</SuppressIces>
   </PropertyGroup>
 
   <ItemGroup>
