@@ -64,9 +64,11 @@ namespace NetSwitcher
         private readonly AdapterCard _cardWifi = new AdapterCard();
 
         private NotifyIcon _tray;
+        private ContextMenuStrip _trayMenu;
         private System.Windows.Forms.Timer _timer;
         private System.Windows.Forms.Timer _networkDebounceTimer;
-        private ToolStripMenuItem _trayStatus, _trayWired, _trayWifi;
+        private ToolStripLabel _trayStatus;
+        private ToolStripMenuItem _trayWired, _trayWifi;
         private bool _loading = true;
         private bool _syncing;
         private bool _busy;
@@ -512,43 +514,94 @@ namespace NetSwitcher
                 Visible = true
             };
 
-            var menu = new ContextMenuStrip
+            _trayMenu = new ContextMenuStrip
             {
-                BackColor = ColorTranslator.FromHtml("#1E2430"),
+                BackColor = ColorTranslator.FromHtml("#202838"),
                 ForeColor = C_Text,
+                Font = F(10f),
                 ShowImageMargin = false,
-                ShowCheckMargin = true
+                ShowCheckMargin = true,
+                DropShadowEnabled = true,
+                MinimumSize = new Size(S(330), 0),
+                Padding = new Padding(S(5)),
+                Renderer = new TrayMenuRenderer()
             };
-            _trayStatus = new ToolStripMenuItem("正在读取网络状态…") { Enabled = false };
+
+            var title = MakeTrayLabel("网络一键切换器", true, C_Text);
+            _trayStatus = MakeTrayLabel("正在读取网络状态…", false, C_Warn);
+            var switchGroup = MakeTrayLabel("快速切换", false, ColorTranslator.FromHtml("#AEB8CA"));
+            var toolsGroup = MakeTrayLabel("工具与设置", false, ColorTranslator.FromHtml("#AEB8CA"));
+
             _trayWired = new ToolStripMenuItem("切换到有线以太网", null,
                 (s, e) => { ShowWindow(false); FireAndTrack(SwitchTo(true, false)); });
             _trayWifi = new ToolStripMenuItem("切换到 Wi-Fi", null,
                 (s, e) => { ShowWindow(false); FireAndTrack(SwitchTo(false, false)); });
-            menu.Items.Add(_trayStatus);
-            menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add(_trayWired);
-            menu.Items.Add(_trayWifi);
-            menu.Items.Add("恢复 Windows 自动跃点数", null, (s, e) =>
+            StyleTrayAction(_trayWired);
+            StyleTrayAction(_trayWifi);
+
+            _trayMenu.Items.Add(title);
+            _trayMenu.Items.Add(_trayStatus);
+            _trayMenu.Items.Add(MakeTraySeparator());
+            _trayMenu.Items.Add(switchGroup);
+            _trayMenu.Items.Add(_trayWired);
+            _trayMenu.Items.Add(_trayWifi);
+            _trayMenu.Items.Add(MakeTrayAction("恢复 Windows 自动跃点数", (s, e) =>
             {
                 ShowWindow(false);
                 FireAndTrack(RestoreWindowsDefaults());
-            });
-            menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add("查看最近操作详情", null, (s, e) => ShowOperationDetails());
-            menu.Items.Add("复制诊断信息", null, (s, e) => CopyDiagnostics());
-            menu.Items.Add("打开日志目录", null, (s, e) => OpenLogFolder());
-            menu.Items.Add("清空日志", null, (s, e) => ClearLogs());
-            menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add("显示主界面", null, (s, e) => ShowWindow());
-            menu.Items.Add("退出", null, (s, e) =>
+            }));
+            _trayMenu.Items.Add(MakeTraySeparator());
+            _trayMenu.Items.Add(toolsGroup);
+            _trayMenu.Items.Add(MakeTrayAction("查看最近操作详情", (s, e) => ShowOperationDetails()));
+            _trayMenu.Items.Add(MakeTrayAction("复制诊断信息", (s, e) => CopyDiagnostics()));
+            _trayMenu.Items.Add(MakeTrayAction("打开日志所在文件夹", (s, e) => OpenLogFolder()));
+            _trayMenu.Items.Add(MakeTrayAction("清空日志", (s, e) => ClearLogs()));
+            _trayMenu.Items.Add(MakeTraySeparator());
+            _trayMenu.Items.Add(MakeTrayAction("打开主界面", (s, e) => ShowWindow()));
+            _trayMenu.Items.Add(MakeTrayAction("退出程序", (s, e) =>
             {
                 _tray.Visible = false;
                 Application.Exit();
-            });
+            }));
 
-            _tray.ContextMenuStrip = menu;
+            _tray.ContextMenuStrip = _trayMenu;
             _tray.DoubleClick += (s, e) => ShowWindow();
             _tray.BalloonTipClicked += (s, e) => ShowWindow();
+        }
+
+        private ToolStripLabel MakeTrayLabel(string text, bool title, Color color)
+        {
+            return new ToolStripLabel(text)
+            {
+                ForeColor = color,
+                Font = F(title ? 10.5f : 8.5f, title ? FontStyle.Bold : FontStyle.Regular),
+                Padding = title
+                    ? new Padding(S(11), S(7), S(11), S(2))
+                    : new Padding(S(11), S(2), S(11), S(5)),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+        }
+
+        private ToolStripMenuItem MakeTrayAction(string text, EventHandler click)
+        {
+            var item = new ToolStripMenuItem(text, null, click);
+            StyleTrayAction(item);
+            return item;
+        }
+
+        private void StyleTrayAction(ToolStripMenuItem item)
+        {
+            item.ForeColor = C_Text;
+            item.Padding = new Padding(S(10), S(6), S(12), S(6));
+            item.Margin = new Padding(S(2), S(1), S(2), S(1));
+        }
+
+        private ToolStripSeparator MakeTraySeparator()
+        {
+            return new ToolStripSeparator
+            {
+                Margin = new Padding(S(10), S(5), S(10), S(5))
+            };
         }
 
         #endregion
@@ -785,6 +838,7 @@ namespace NetSwitcher
             if (_trayStatus == null) return;
             var currentText = _currentExit == null ? "当前出口：未识别" : "当前出口：" + _currentExit.Name;
             _trayStatus.Text = currentText;
+            _trayStatus.ForeColor = _currentExit == null ? C_Warn : C_Ok;
             _trayWired.Checked = _currentExit != null && _currentExit.IsEthernet;
             _trayWifi.Checked = _currentExit != null && _currentExit.IsWireless;
 
@@ -1288,6 +1342,7 @@ namespace NetSwitcher
                 _networkDebounceTimer?.Stop();
                 _networkDebounceTimer?.Dispose();
                 _tray?.Dispose();
+                _trayMenu?.Dispose();
             }
             base.Dispose(disposing);
         }
@@ -1380,6 +1435,64 @@ namespace NetSwitcher
             public Label Metric;
             public Label Badge;
             public Button Button;
+        }
+
+        private sealed class TrayMenuRenderer : ToolStripProfessionalRenderer
+        {
+            private static readonly Color NormalText = ColorTranslator.FromHtml("#F3F6FA");
+            private static readonly Color DisabledText = ColorTranslator.FromHtml("#8490A5");
+
+            public TrayMenuRenderer() : base(new TrayMenuColorTable())
+            {
+                RoundedEdges = false;
+            }
+
+            protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+            {
+                if (e.Item is ToolStripLabel)
+                    e.TextColor = e.Item.ForeColor;
+                else
+                    e.TextColor = e.Item.Enabled ? NormalText : DisabledText;
+                base.OnRenderItemText(e);
+            }
+
+            protected override void OnRenderArrow(ToolStripArrowRenderEventArgs e)
+            {
+                e.ArrowColor = e.Item.Enabled ? NormalText : DisabledText;
+                base.OnRenderArrow(e);
+            }
+        }
+
+        private sealed class TrayMenuColorTable : ProfessionalColorTable
+        {
+            private static readonly Color Background = ColorTranslator.FromHtml("#202838");
+            private static readonly Color Selection = ColorTranslator.FromHtml("#304765");
+            private static readonly Color Accent = ColorTranslator.FromHtml("#5DAEFF");
+            private static readonly Color Border = ColorTranslator.FromHtml("#46546A");
+            private static readonly Color Separator = ColorTranslator.FromHtml("#354154");
+
+            public TrayMenuColorTable()
+            {
+                UseSystemColors = false;
+            }
+
+            public override Color ToolStripDropDownBackground => Background;
+            public override Color ImageMarginGradientBegin => Background;
+            public override Color ImageMarginGradientMiddle => Background;
+            public override Color ImageMarginGradientEnd => Background;
+            public override Color MenuBorder => Border;
+            public override Color MenuItemBorder => Accent;
+            public override Color MenuItemSelected => Selection;
+            public override Color MenuItemSelectedGradientBegin => Selection;
+            public override Color MenuItemSelectedGradientEnd => Selection;
+            public override Color MenuItemPressedGradientBegin => Selection;
+            public override Color MenuItemPressedGradientMiddle => Selection;
+            public override Color MenuItemPressedGradientEnd => Selection;
+            public override Color CheckBackground => Selection;
+            public override Color CheckSelectedBackground => Selection;
+            public override Color CheckPressedBackground => Accent;
+            public override Color SeparatorDark => Separator;
+            public override Color SeparatorLight => Separator;
         }
     }
 }
