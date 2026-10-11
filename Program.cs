@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -6,9 +7,20 @@ namespace NetSwitcher
 {
     internal static class Program
     {
+        private static Mutex _singleInstance;
+
         [STAThread]
         private static void Main()
         {
+            _singleInstance = new Mutex(true, @"Local\NetSwitcher_6D374D73", out var isFirstInstance);
+            if (!isFirstInstance)
+            {
+                MessageBox.Show("网络一键切换器已经在运行，请检查系统托盘。",
+                    "NetSwitcher", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                _singleInstance.Dispose();
+                return;
+            }
+
             ApplicationConfiguration.Initialize();
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
             Application.ThreadException += (s, e) =>
@@ -43,6 +55,8 @@ namespace NetSwitcher
             finally
             {
                 AppLogger.Info("NetSwitcher 退出。");
+                _singleInstance.ReleaseMutex();
+                _singleInstance.Dispose();
             }
         }
     }

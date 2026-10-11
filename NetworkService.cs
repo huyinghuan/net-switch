@@ -7,6 +7,7 @@ using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Tasks;
 
 namespace NetSwitcher
 {
@@ -187,12 +188,20 @@ namespace NetSwitcher
             }
         }
 
-        public static AdapterInfo PickDefault(IEnumerable<AdapterInfo> list, bool wireless, string rememberedName)
+        public static AdapterInfo PickDefault(IEnumerable<AdapterInfo> list, bool wireless, string rememberedName) =>
+            PickDefault(list, wireless, "", rememberedName);
+
+        public static AdapterInfo PickDefault(IEnumerable<AdapterInfo> list, bool wireless, string rememberedId, string rememberedName)
         {
             var all = list.Where(a => wireless ? a.IsWireless : a.IsEthernet).ToList();
             if (all.Count == 0) return null;
 
-            // 1) 用户上次指定的
+            // 1) 稳定 ID 优先；兼容旧配置时再按名称匹配
+            if (!string.IsNullOrEmpty(rememberedId))
+            {
+                var hit = all.FirstOrDefault(a => string.Equals(a.Id, rememberedId, StringComparison.OrdinalIgnoreCase));
+                if (hit != null) return hit;
+            }
             if (!string.IsNullOrEmpty(rememberedName))
             {
                 var hit = all.FirstOrDefault(a => a.Name == rememberedName);
@@ -209,7 +218,10 @@ namespace NetSwitcher
         }
 
         /// <summary>下拉框候选项：物理网卡优先，若用户上次的网卡是虚拟的也保留。</summary>
-        public static List<AdapterInfo> BuildCandidateList(IEnumerable<AdapterInfo> all, bool wireless, string rememberedName)
+        public static List<AdapterInfo> BuildCandidateList(IEnumerable<AdapterInfo> all, bool wireless, string rememberedName) =>
+            BuildCandidateList(all, wireless, "", rememberedName);
+
+        public static List<AdapterInfo> BuildCandidateList(IEnumerable<AdapterInfo> all, bool wireless, string rememberedId, string rememberedName)
         {
             var same = all.Where(a => wireless ? a.IsWireless : a.IsEthernet).ToList();
             // 物理网卡在前，能上网的在前；虚拟网卡排在后面备用
@@ -226,17 +238,128 @@ namespace NetSwitcher
                 list = ordered.ToList();
             }
 
-            if (!string.IsNullOrEmpty(rememberedName))
+            if (!string.IsNullOrEmpty(rememberedId) || !string.IsNullOrEmpty(rememberedName))
             {
-                var missing = ordered.FirstOrDefault(a => a.Name == rememberedName && !list.Contains(a));
+                var missing = ordered.FirstOrDefault(a =>
+                    ((string.IsNullOrEmpty(rememberedId) && a.Name == rememberedName) ||
+                     string.Equals(a.Id, rememberedId, StringComparison.OrdinalIgnoreCase)) && !list.Contains(a));
                 if (missing != null) list.Insert(0, missing);
             }
             return list;
         }
 
+        public static AdapterInfo FindByIdentity(IEnumerable<AdapterInfo> list, string id, string name)
+        {
+            if (list == null) return null;
+            if (!string.IsNullOrEmpty(id))
+            {
+                var byId = list.FirstOrDefault(a => string.Equals(a.Id, id, StringComparison.OrdinalIgnoreCase));
+                if (byId != null) return byId;
+            }
+            return string.IsNullOrEmpty(name) ? null : list.FirstOrDefault(a => a.Name == name);
+        }
+
         #endregion
 
         #region 切换
+
+        public static async Task<SwitchResult> SwitchExitWithRollbackAsync(
+            AdapterInfo target, AdapterInfo other, bool hardIsolate)
+        {
+            var result = new SwitchResult();
+            if (target == null)
+            {
+                result.Message = "没有可用的目标网卡。";
+                result.Steps.Add(new OperationStep { Name = "检查目标网卡", Success = false, Detail = result.Message });
+                return result;
+            }
+
+            var selected = new[] { target, other }.Where(a => a != null).Distinct().ToArray();
+            var captured = await Task.Run(() => TryCaptureConfiguration(selected, out var snapshot, out var error)
+                ? (success: true, snapshot, error: "")
+                : (success: false, snapshot: (NetworkConfigurationSnapshot)null, error));
+            result.Steps.Add(new OperationStep
+            {
+                Name = "保存原网络配置",
+                Success = captured.success,
+                Detail = captured.success ? "已保存网卡启用状态和跃点数" : captured.error
+            });
+            if (!captured.success)
+            {
+                result.Message = "无法保存切换前的网络配置，已取消操作以避免无法回滚。";
+                AppLogger.Error(result.Message + " " + captured.error);
+                return result;
+            }
+
+            var applied = await Task.Run(() => SetExit(target, other, hardIsolate, out var message)
+                ? (success: true, message)
+                : (success: false, message));
+            result.Steps.Add(new OperationStep { Name = "应用出口配置", Success = applied.success, Detail = applied.message });
+            if (!applied.success)
+            {
+                await RollBackAsync(captured.snapshot, result);
+                result.Message = result.RolledBack
+                    ? "切换未完成，已恢复原网络配置。"
+                    : "切换失败，并且自动恢复未完全成功，请查看操作详情。";
+                AppLogger.Error(result.ToDetailText());
+                return result;
+            }
+
+            AdapterInfo verifiedTarget = null;
+            for (var attempt = 0; attempt < 8; attempt++)
+            {
+                await Task.Delay(attempt == 0 ? 700 : 900);
+                var current = await Task.Run(Enumerate);
+                verifiedTarget = FindByIdentity(current, target.Id, target.Name);
+                if (verifiedTarget?.CanRoute == true) break;
+            }
+
+            var addressReady = verifiedTarget?.CanRoute == true;
+            result.Steps.Add(new OperationStep
+            {
+                Name = "获取网络地址",
+                Success = addressReady,
+                Detail = addressReady
+                    ? "IP " + verifiedTarget.Ip + "，网关 " + verifiedTarget.Gateway
+                    : "目标网卡未在限定时间内获得 IP 和默认网关"
+            });
+
+            if (addressReady)
+            {
+                var connectivity = await ConnectivityService.CheckAsync(verifiedTarget);
+                result.Steps.AddRange(connectivity);
+            }
+
+            var internetOk = result.Steps.Any(s => s.Name == "公网 HTTPS" && s.Success);
+            if (!addressReady || !internetOk)
+            {
+                await RollBackAsync(captured.snapshot, result);
+                result.Message = result.RolledBack
+                    ? "新出口无法访问公网，已自动恢复原网络配置。"
+                    : "新出口无法访问公网，自动恢复也未完全成功，请立即查看详情。";
+                AppLogger.Error(result.ToDetailText());
+                return result;
+            }
+
+            result.Success = true;
+            result.Message = "已切换到「" + target.Name + "」，联网检测通过。";
+            AppLogger.Info(result.ToDetailText());
+            return result;
+        }
+
+        private static async Task RollBackAsync(NetworkConfigurationSnapshot snapshot, SwitchResult result)
+        {
+            var rollback = await Task.Run(() => RestoreConfiguration(snapshot, out var message)
+                ? (success: true, message)
+                : (success: false, message));
+            result.RolledBack = rollback.success;
+            result.Steps.Add(new OperationStep
+            {
+                Name = "恢复原网络配置",
+                Success = rollback.success,
+                Detail = rollback.message
+            });
+        }
 
         /// <summary>
         /// 把 target 设为上网出口；other 为另一张网卡（可为 null）。
@@ -370,6 +493,185 @@ namespace NetSwitcher
                 : "操作网卡「" + adapter.Name + "」失败：" + ShortError(result.StandardError);
             AppLogger.Error(message);
             return false;
+        }
+
+        public static bool RestoreAutomaticMetrics(IEnumerable<AdapterInfo> adapters, out string message)
+        {
+            var list = (adapters ?? Enumerable.Empty<AdapterInfo>())
+                .Where(a => a != null)
+                .GroupBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.First())
+                .ToList();
+            if (list.Count == 0)
+            {
+                message = "没有可恢复的网卡。";
+                return false;
+            }
+
+            var script = new StringBuilder();
+            script.AppendLine("[Console]::OutputEncoding=[System.Text.Encoding]::UTF8");
+            script.AppendLine("$ErrorActionPreference='Stop'");
+            foreach (var adapter in list)
+            {
+                script.AppendLine("$adapter=Get-NetAdapter | Where-Object { $_.Name -eq '" + Esc(adapter.Name) + "' } | Select-Object -First 1");
+                script.AppendLine("if($null -eq $adapter){ throw '找不到网卡：" + Esc(adapter.Name) + "' }");
+                script.AppendLine("if($adapter.Status -eq 'Disabled'){ $adapter | Enable-NetAdapter -Confirm:$false }");
+                script.AppendLine("Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Set-NetIPInterface -AutomaticMetric Enabled");
+                script.AppendLine("Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue | Set-NetIPInterface -AutomaticMetric Enabled");
+            }
+
+            var execution = RunPowerShell(script.ToString());
+            if (!execution.Success)
+            {
+                message = execution.TimedOut
+                    ? "恢复 Windows 自动跃点数超时。"
+                    : "恢复失败：" + ShortError(execution.StandardError);
+                AppLogger.Error(message);
+                return false;
+            }
+
+            message = "已启用所选网卡，并恢复 Windows 自动跃点数。";
+            AppLogger.Info(message);
+            return true;
+        }
+
+        private static bool TryCaptureConfiguration(
+            IEnumerable<AdapterInfo> adapters,
+            out NetworkConfigurationSnapshot snapshot,
+            out string error)
+        {
+            snapshot = new NetworkConfigurationSnapshot();
+            error = "";
+            var names = (adapters ?? Enumerable.Empty<AdapterInfo>())
+                .Where(a => a != null && !string.IsNullOrWhiteSpace(a.Name))
+                .Select(a => a.Name)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (names.Count == 0)
+            {
+                error = "没有需要保存的网卡。";
+                return false;
+            }
+
+            var nameArray = string.Join(",", names.Select(n => "'" + Esc(n) + "'"));
+            var script =
+                "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8\n" +
+                "$ErrorActionPreference='Stop'\n" +
+                "$names=@(" + nameArray + ")\n" +
+                "$out=@()\n" +
+                "foreach($name in $names){\n" +
+                "  $adapter=Get-NetAdapter | Where-Object { $_.Name -eq $name } | Select-Object -First 1\n" +
+                "  if($null -eq $adapter){ throw ('找不到网卡：'+$name) }\n" +
+                "  $v4=Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1\n" +
+                "  $v6=Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue | Select-Object -First 1\n" +
+                "  $out+=[pscustomobject]@{ name=$adapter.Name; enabled=[bool]($adapter.Status -ne 'Disabled'); " +
+                "v4Metric=$(if($v4){[int]$v4.InterfaceMetric}else{$null}); v4Automatic=$(if($v4){[string]$v4.AutomaticMetric}else{''}); " +
+                "v6Metric=$(if($v6){[int]$v6.InterfaceMetric}else{$null}); v6Automatic=$(if($v6){[string]$v6.AutomaticMetric}else{''}) }\n" +
+                "}\n" +
+                "$out | ConvertTo-Json -Compress";
+
+            var execution = RunPowerShell(script);
+            if (!execution.Success || string.IsNullOrWhiteSpace(execution.StandardOutput))
+            {
+                error = execution.TimedOut ? "保存网络配置超时。" : ShortError(execution.StandardError);
+                return false;
+            }
+
+            try
+            {
+                using var doc = JsonDocument.Parse(execution.StandardOutput.Trim());
+                if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var node in doc.RootElement.EnumerateArray()) AddConfigurationState(node, snapshot);
+                }
+                else if (doc.RootElement.ValueKind == JsonValueKind.Object)
+                {
+                    AddConfigurationState(doc.RootElement, snapshot);
+                }
+                if (snapshot.Adapters.Count == names.Count) return true;
+                error = "未能读取全部网卡的原始状态。";
+                return false;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                AppLogger.Error("解析网络配置快照失败。", ex);
+                return false;
+            }
+        }
+
+        private static void AddConfigurationState(JsonElement node, NetworkConfigurationSnapshot snapshot)
+        {
+            var state = new AdapterConfigurationState
+            {
+                Name = node.TryGetProperty("name", out var name) ? name.GetString() ?? "" : "",
+                Enabled = node.TryGetProperty("enabled", out var enabled) && enabled.ValueKind == JsonValueKind.True,
+                V4Metric = NullableInt(node, "v4Metric"),
+                V4Automatic = IsAutomatic(node, "v4Automatic"),
+                V6Metric = NullableInt(node, "v6Metric"),
+                V6Automatic = IsAutomatic(node, "v6Automatic")
+            };
+            if (!string.IsNullOrWhiteSpace(state.Name)) snapshot.Adapters.Add(state);
+        }
+
+        private static int? NullableInt(JsonElement node, string property)
+        {
+            return node.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.Number
+                ? value.GetInt32()
+                : (int?)null;
+        }
+
+        private static bool IsAutomatic(JsonElement node, string property)
+        {
+            return node.TryGetProperty(property, out var value) &&
+                   string.Equals(value.GetString(), "Enabled", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool RestoreConfiguration(NetworkConfigurationSnapshot snapshot, out string message)
+        {
+            if (snapshot == null || snapshot.Adapters.Count == 0)
+            {
+                message = "没有可用于恢复的网络配置快照。";
+                return false;
+            }
+
+            var script = new StringBuilder();
+            script.AppendLine("[Console]::OutputEncoding=[System.Text.Encoding]::UTF8");
+            script.AppendLine("$ErrorActionPreference='Stop'");
+            foreach (var state in snapshot.Adapters)
+            {
+                script.AppendLine("$adapter=Get-NetAdapter | Where-Object { $_.Name -eq '" + Esc(state.Name) + "' } | Select-Object -First 1");
+                script.AppendLine("if($null -eq $adapter){ throw '找不到要恢复的网卡：" + Esc(state.Name) + "' }");
+                script.AppendLine("if($adapter.Status -eq 'Disabled'){ $adapter | Enable-NetAdapter -Confirm:$false }");
+                AppendMetricRestore(script, "$adapter.ifIndex", "IPv4", state.V4Automatic, state.V4Metric);
+                AppendMetricRestore(script, "$adapter.ifIndex", "IPv6", state.V6Automatic, state.V6Metric);
+                if (!state.Enabled)
+                    script.AppendLine("$adapter | Disable-NetAdapter -Confirm:$false");
+            }
+
+            var execution = RunPowerShell(script.ToString());
+            if (!execution.Success)
+            {
+                message = execution.TimedOut ? "恢复操作超时。" : ShortError(execution.StandardError);
+                AppLogger.Error("恢复原网络配置失败：" + message);
+                return false;
+            }
+
+            message = "已恢复切换前的网卡状态和跃点数。";
+            return true;
+        }
+
+        private static void AppendMetricRestore(
+            StringBuilder script, string interfaceIndex, string family, bool automatic, int? metric)
+        {
+            if (!automatic && !metric.HasValue) return;
+            var variable = "$restore" + family;
+            script.AppendLine(variable + "=Get-NetIPInterface -InterfaceIndex " + interfaceIndex +
+                              " -AddressFamily " + family + " -ErrorAction SilentlyContinue | Select-Object -First 1");
+            if (automatic)
+                script.AppendLine("if(" + variable + "){ " + variable + " | Set-NetIPInterface -AutomaticMetric Enabled }");
+            else
+                script.AppendLine("if(" + variable + "){ " + variable + " | Set-NetIPInterface -AutomaticMetric Disabled -InterfaceMetric " + metric.Value + " }");
         }
 
         #endregion

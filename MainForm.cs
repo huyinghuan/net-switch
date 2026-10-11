@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.IO;
 using System.Linq;
+using System.Net.NetworkInformation;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -54,14 +57,16 @@ namespace NetSwitcher
         private Panel _header, _summary, _cardsHost, _options, _statusBar;
         private Panel _cardLeft, _cardRight;
         private Label _lblTitle, _lblVer, _sumTip, _sumTitle, _sumSub, _statusLabel;
-        private Button _btnClose, _btnMin, _btnRefresh;
+        private Button _btnClose, _btnMin, _btnRefresh, _btnDetails, _btnDiagnostics, _btnRestoreDefaults;
         private CheckBox _chkHard, _chkRestore;
 
         private readonly AdapterCard _cardWired = new AdapterCard();
         private readonly AdapterCard _cardWifi = new AdapterCard();
 
         private NotifyIcon _tray;
-        private Timer _timer;
+        private System.Windows.Forms.Timer _timer;
+        private System.Windows.Forms.Timer _networkDebounceTimer;
+        private ToolStripMenuItem _trayStatus, _trayWired, _trayWifi;
         private bool _loading = true;
         private bool _syncing;
         private bool _busy;
@@ -72,6 +77,7 @@ namespace NetSwitcher
         private readonly Dictionary<int, Tuple<long, long>> _lastBytes = new Dictionary<int, Tuple<long, long>>();
         private DateTime _lastSample = DateTime.MinValue;
         private AdapterInfo _currentExit;
+        private SwitchResult _lastOperation;
 
         public MainForm()
         {
@@ -89,6 +95,15 @@ namespace NetSwitcher
             _timer = new Timer { Interval = 1000 };
             _timer.Tick += OnTick;
             _timer.Start();
+
+            _networkDebounceTimer = new Timer { Interval = 600 };
+            _networkDebounceTimer.Tick += (s, e) =>
+            {
+                _networkDebounceTimer.Stop();
+                if (!_busy) FireAndTrack(RefreshAdaptersAsync(true));
+            };
+            NetworkChange.NetworkAddressChanged += OnNetworkAddressChanged;
+            NetworkChange.NetworkAvailabilityChanged += OnNetworkAvailabilityChanged;
         }
 
         #region 界面搭建
@@ -276,8 +291,38 @@ namespace NetSwitcher
                 TextAlign = ContentAlignment.MiddleLeft,
                 Text = "就绪"
             };
+            _btnDetails = MakeFooterButton("操作详情");
+            _btnDetails.Enabled = false;
+            _btnDetails.Click += (s, e) => ShowOperationDetails();
+
+            _btnDiagnostics = MakeFooterButton("复制诊断");
+            _btnDiagnostics.Click += (s, e) => CopyDiagnostics();
+
+            _btnRestoreDefaults = MakeFooterButton("恢复系统默认");
+            _btnRestoreDefaults.Click += (s, e) => FireAndTrack(RestoreWindowsDefaults());
+
             panel.Controls.Add(_statusLabel);
+            panel.Controls.Add(_btnDetails);
+            panel.Controls.Add(_btnDiagnostics);
+            panel.Controls.Add(_btnRestoreDefaults);
             return panel;
+        }
+
+        private Button MakeFooterButton(string text)
+        {
+            var button = new Button
+            {
+                Text = text,
+                FlatStyle = FlatStyle.Flat,
+                ForeColor = C_Muted,
+                BackColor = C_Header,
+                Font = F(8f),
+                Cursor = Cursors.Hand,
+                TabStop = false
+            };
+            button.FlatAppearance.BorderSize = 0;
+            button.FlatAppearance.MouseOverBackColor = ColorTranslator.FromHtml("#2A3242");
+            return button;
         }
 
         private Panel BuildCard(string title, AdapterCard card, Color accent, string buttonText)
@@ -412,7 +457,10 @@ namespace NetSwitcher
             _chkHard.Location = new Point(S(20), S(7));
             _chkRestore.Location = new Point(S(20), S(36));
 
-            _statusLabel.Bounds = new Rectangle(S(20), 0, w - S(40), statusH);
+            _btnRestoreDefaults.Bounds = new Rectangle(w - S(112), 0, S(104), statusH);
+            _btnDiagnostics.Bounds = new Rectangle(_btnRestoreDefaults.Left - S(78), 0, S(76), statusH);
+            _btnDetails.Bounds = new Rectangle(_btnDiagnostics.Left - S(76), 0, S(74), statusH);
+            _statusLabel.Bounds = new Rectangle(S(20), 0, Math.Max(S(100), _btnDetails.Left - S(28)), statusH);
 
             LayoutCard(_cardLeft, _cardWired);
             LayoutCard(_cardRight, _cardWifi);
@@ -469,10 +517,27 @@ namespace NetSwitcher
                 BackColor = ColorTranslator.FromHtml("#1E2430"),
                 ForeColor = C_Text,
                 ShowImageMargin = false,
-                ShowCheckMargin = false
+                ShowCheckMargin = true
             };
-            menu.Items.Add("切换到有线以太网", null, (s, e) => { ShowWindow(); FireAndTrack(SwitchTo(true, false)); });
-            menu.Items.Add("切换到 Wi-Fi", null, (s, e) => { ShowWindow(); FireAndTrack(SwitchTo(false, false)); });
+            _trayStatus = new ToolStripMenuItem("正在读取网络状态…") { Enabled = false };
+            _trayWired = new ToolStripMenuItem("切换到有线以太网", null,
+                (s, e) => { ShowWindow(false); FireAndTrack(SwitchTo(true, false)); });
+            _trayWifi = new ToolStripMenuItem("切换到 Wi-Fi", null,
+                (s, e) => { ShowWindow(false); FireAndTrack(SwitchTo(false, false)); });
+            menu.Items.Add(_trayStatus);
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(_trayWired);
+            menu.Items.Add(_trayWifi);
+            menu.Items.Add("恢复 Windows 自动跃点数", null, (s, e) =>
+            {
+                ShowWindow(false);
+                FireAndTrack(RestoreWindowsDefaults());
+            });
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add("查看最近操作详情", null, (s, e) => ShowOperationDetails());
+            menu.Items.Add("复制诊断信息", null, (s, e) => CopyDiagnostics());
+            menu.Items.Add("打开日志目录", null, (s, e) => OpenLogFolder());
+            menu.Items.Add("清空日志", null, (s, e) => ClearLogs());
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("显示主界面", null, (s, e) => ShowWindow());
             menu.Items.Add("退出", null, (s, e) =>
@@ -492,20 +557,25 @@ namespace NetSwitcher
 
         private void PopulateCombos()
         {
-            SyncCombo(_cardWired.Combo, NetworkService.BuildCandidateList(_adapters, false, _cfg.EthernetAdapter), _cfg.EthernetAdapter);
-            SyncCombo(_cardWifi.Combo, NetworkService.BuildCandidateList(_adapters, true, _cfg.WifiAdapter), _cfg.WifiAdapter);
+            SyncCombo(_cardWired.Combo,
+                NetworkService.BuildCandidateList(_adapters, false, _cfg.EthernetAdapterId, _cfg.EthernetAdapter),
+                _cfg.EthernetAdapterId, _cfg.EthernetAdapter);
+            SyncCombo(_cardWifi.Combo,
+                NetworkService.BuildCandidateList(_adapters, true, _cfg.WifiAdapterId, _cfg.WifiAdapter),
+                _cfg.WifiAdapterId, _cfg.WifiAdapter);
             _chkHard.Checked = _cfg.HardIsolate;
             _chkRestore.Checked = _cfg.RestoreOnStartup;
             SaveSelection();
         }
 
-        private void SyncCombo(ComboBox combo, List<AdapterInfo> items, string remembered)
+        private void SyncCombo(ComboBox combo, List<AdapterInfo> items, string rememberedId, string rememberedName)
         {
-            var want = combo.SelectedItem is AdapterInfo cur ? cur.Name : remembered;
-            if (string.IsNullOrEmpty(want)) want = remembered;
+            var current = combo.SelectedItem as AdapterInfo;
+            var wantId = current?.Id ?? rememberedId;
+            var wantName = current?.Name ?? rememberedName;
 
-            var newKey = string.Join("|", items.Select(i => i.Name));
-            var oldKey = string.Join("|", combo.Items.OfType<AdapterInfo>().Select(i => i.Name));
+            var newKey = string.Join("|", items.Select(i => i.Id + ":" + i.Name));
+            var oldKey = string.Join("|", combo.Items.OfType<AdapterInfo>().Select(i => i.Id + ":" + i.Name));
 
             _syncing = true;
             if (newKey != oldKey)
@@ -517,7 +587,7 @@ namespace NetSwitcher
             }
             if (combo.Items.Count > 0)
             {
-                var pick = items.FirstOrDefault(i => i.Name == want) ?? items[0];
+                var pick = NetworkService.FindByIdentity(items, wantId, wantName) ?? items[0];
                 if (!ReferenceEquals(combo.SelectedItem, pick)) combo.SelectedItem = pick;
             }
             _syncing = false;
@@ -532,13 +602,27 @@ namespace NetSwitcher
 
         private void SaveSelection()
         {
-            if (_cardWired.Combo?.SelectedItem is AdapterInfo a1) _cfg.EthernetAdapter = a1.Name;
-            if (_cardWifi.Combo?.SelectedItem is AdapterInfo a2) _cfg.WifiAdapter = a2.Name;
+            if (_cardWired.Combo?.SelectedItem is AdapterInfo a1)
+            {
+                _cfg.EthernetAdapter = a1.Name;
+                _cfg.EthernetAdapterId = a1.Id;
+            }
+            if (_cardWifi.Combo?.SelectedItem is AdapterInfo a2)
+            {
+                _cfg.WifiAdapter = a2.Name;
+                _cfg.WifiAdapterId = a2.Id;
+            }
             _cfg.Save();
         }
 
         private static string SelectedName(ComboBox combo) =>
             combo.SelectedItem is AdapterInfo a ? a.Name : null;
+
+        private AdapterInfo SelectedAdapter(ComboBox combo)
+        {
+            var selected = combo.SelectedItem as AdapterInfo;
+            return selected == null ? null : NetworkService.FindByIdentity(_adapters, selected.Id, selected.Name);
+        }
 
         private async Task<bool> RefreshAdaptersAsync(bool withMetrics)
         {
@@ -562,10 +646,12 @@ namespace NetSwitcher
                 _adapters = snapshot.Item1;
                 if (readMetrics) _metricsStale = !snapshot.Item2;
                 SyncCombo(_cardWired.Combo,
-                    NetworkService.BuildCandidateList(_adapters, false, _cfg.EthernetAdapter),
+                    NetworkService.BuildCandidateList(_adapters, false, _cfg.EthernetAdapterId, _cfg.EthernetAdapter),
+                    (_cardWired.Combo.SelectedItem as AdapterInfo)?.Id ?? _cfg.EthernetAdapterId,
                     SelectedName(_cardWired.Combo) ?? _cfg.EthernetAdapter);
                 SyncCombo(_cardWifi.Combo,
-                    NetworkService.BuildCandidateList(_adapters, true, _cfg.WifiAdapter),
+                    NetworkService.BuildCandidateList(_adapters, true, _cfg.WifiAdapterId, _cfg.WifiAdapter),
+                    (_cardWifi.Combo.SelectedItem as AdapterInfo)?.Id ?? _cfg.WifiAdapterId,
                     SelectedName(_cardWifi.Combo) ?? _cfg.WifiAdapter);
                 UpdateUi();
                 return snapshot.Item2;
@@ -583,7 +669,7 @@ namespace NetSwitcher
 
         private void OnTick(object sender, EventArgs e)
         {
-            if (_busy || _refreshing) return;
+            if (!Visible || _busy || _refreshing) return;
             FireAndTrack(RefreshAdaptersAsync(false));
         }
 
@@ -597,9 +683,10 @@ namespace NetSwitcher
                 .OrderBy(a => a.EffectiveMetric)
                 .FirstOrDefault();
 
-            UpdateCard(_cardWired, SelectedName(_cardWired.Combo), dt, C_Wired);
-            UpdateCard(_cardWifi, SelectedName(_cardWifi.Combo), dt, C_Wifi);
+            UpdateCard(_cardWired, SelectedAdapter(_cardWired.Combo), dt, C_Wired);
+            UpdateCard(_cardWifi, SelectedAdapter(_cardWifi.Combo), dt, C_Wifi);
             UpdateSummary();
+            UpdateTrayMenu();
 
             _lastBytes.Clear();
             foreach (var a in _adapters)
@@ -609,10 +696,8 @@ namespace NetSwitcher
             _lastSample = now;
         }
 
-        private void UpdateCard(AdapterCard card, string name, double dt, Color accent)
+        private void UpdateCard(AdapterCard card, AdapterInfo a, double dt, Color accent)
         {
-            var a = string.IsNullOrEmpty(name) ? null : _adapters.FirstOrDefault(x => x.Name == name);
-
             if (a == null)
             {
                 card.Status.Text = "未检测到网卡";
@@ -695,6 +780,23 @@ namespace NetSwitcher
                            "　" + (backup != null ? "备用出口 " + backup.Name : "无备用出口");
         }
 
+        private void UpdateTrayMenu()
+        {
+            if (_trayStatus == null) return;
+            var currentText = _currentExit == null ? "当前出口：未识别" : "当前出口：" + _currentExit.Name;
+            _trayStatus.Text = currentText;
+            _trayWired.Checked = _currentExit != null && _currentExit.IsEthernet;
+            _trayWifi.Checked = _currentExit != null && _currentExit.IsWireless;
+
+            var wired = SelectedAdapter(_cardWired.Combo);
+            var wifi = SelectedAdapter(_cardWifi.Combo);
+            _trayWired.Text = "切换到有线" + (wired == null ? "（未检测到）" : " · " + wired.Name);
+            _trayWifi.Text = "切换到 Wi-Fi" + (wifi == null ? "（未检测到）" : " · " + wifi.Name);
+            _trayWired.Enabled = wired != null && !_busy;
+            _trayWifi.Enabled = wifi != null && !_busy;
+            _tray.Text = currentText.Length <= 63 ? currentText : currentText.Substring(0, 63);
+        }
+
         #endregion
 
         #region 切换
@@ -703,25 +805,16 @@ namespace NetSwitcher
         {
             if (_busy || _refreshing) return false;
 
-            var targetName = toWired ? SelectedName(_cardWired.Combo) : SelectedName(_cardWifi.Combo);
-            var otherName = toWired ? SelectedName(_cardWifi.Combo) : SelectedName(_cardWired.Combo);
+            var target = SelectedAdapter(toWired ? _cardWired.Combo : _cardWifi.Combo);
+            var other = SelectedAdapter(toWired ? _cardWifi.Combo : _cardWired.Combo);
 
-            if (string.IsNullOrEmpty(targetName))
+            if (target == null)
             {
                 SetStatus("请先在下拉框里选择要使用的那张网卡。", true);
                 return false;
             }
 
-            var target = _adapters.FirstOrDefault(x => x.Name == targetName);
-            if (target == null)
-            {
-                SetStatus("找不到网卡「" + targetName + "」，请点右上角 ⟳ 刷新后重试。", true);
-                return false;
-            }
-
-            AdapterInfo other = string.IsNullOrEmpty(otherName) || otherName == targetName
-                ? null
-                : _adapters.FirstOrDefault(x => x.Name == otherName);
+            if (other != null && string.Equals(other.Id, target.Id, StringComparison.OrdinalIgnoreCase)) other = null;
 
             if ((!target.IsUp || !target.HasIp) && !silent)
             {
@@ -736,40 +829,45 @@ namespace NetSwitcher
 
             _busy = true;
             SetBusyUi(true);
-            SetStatus("正在切换到「" + target.Name + "」…");
+            SetStatus("正在切换并验证「" + target.Name + "」…");
 
             bool hard = _chkHard.Checked;
-            string message = "";
-            bool ok = false;
             try
             {
                 try
                 {
-                    await Task.Run(() => ok = NetworkService.SetExit(target, other, hard, out message));
+                    _lastOperation = await NetworkService.SwitchExitWithRollbackAsync(target, other, hard);
                 }
                 catch (Exception ex)
                 {
-                    message = "切换失败：" + ex.Message;
                     AppLogger.Error("切换网络出口时发生异常。", ex);
+                    _lastOperation = new SwitchResult
+                    {
+                        Message = "切换失败：" + ex.Message,
+                        Success = false
+                    };
                 }
 
-                if (ok)
+                _btnDetails.Enabled = true;
+                if (_lastOperation.Success)
                 {
                     _cfg.LastExit = target.Name;
+                    _cfg.LastExitId = target.Id;
                     _cfg.Save();
                 }
 
                 _metricsStale = true;
                 await RefreshAdaptersAsync(true);
 
-                SetStatus(message, !ok);
+                SetStatus(_lastOperation.Message, !_lastOperation.Success);
                 if (!silent)
                 {
-                    _tray.BalloonTipTitle = ok ? "切换完成" : "切换未完成";
-                    _tray.BalloonTipText = message;
+                    _tray.BalloonTipTitle = _lastOperation.Success ? "切换完成" : "已执行安全保护";
+                    _tray.BalloonTipText = _lastOperation.Message;
                     _tray.ShowBalloonTip(3000);
+                    if (!_lastOperation.Success) ShowOperationDetails();
                 }
-                return ok;
+                return _lastOperation.Success;
             }
             finally
             {
@@ -821,9 +919,7 @@ namespace NetSwitcher
 
         private async Task ReEnableOther()
         {
-            var names = new[] { SelectedName(_cardWired.Combo), SelectedName(_cardWifi.Combo) };
-            var adapters = names
-                .Select(name => string.IsNullOrEmpty(name) ? null : _adapters.FirstOrDefault(x => x.Name == name))
+            var adapters = new[] { SelectedAdapter(_cardWired.Combo), SelectedAdapter(_cardWifi.Combo) }
                 .Where(a => a != null)
                 .ToArray();
 
@@ -856,18 +952,160 @@ namespace NetSwitcher
             }
         }
 
+        private async Task RestoreWindowsDefaults()
+        {
+            if (_busy || _refreshing) return;
+            var answer = MessageBox.Show(this,
+                "这会启用当前选择的有线和 Wi-Fi 网卡，并把 IPv4/IPv6 跃点数恢复为 Windows 自动管理。\n\n继续吗？",
+                "恢复系统默认网络设置",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+            if (answer != DialogResult.Yes) return;
+
+            var selected = new[] { SelectedAdapter(_cardWired.Combo), SelectedAdapter(_cardWifi.Combo) }
+                .Where(a => a != null)
+                .GroupBy(a => a.Id, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.First())
+                .ToArray();
+
+            _busy = true;
+            SetBusyUi(true);
+            SetStatus("正在恢复 Windows 自动网络设置…");
+            try
+            {
+                var operation = await Task.Run(() =>
+                    NetworkService.RestoreAutomaticMetrics(selected, out var message)
+                        ? (success: true, message)
+                        : (success: false, message));
+
+                _lastOperation = new SwitchResult
+                {
+                    Success = operation.success,
+                    Message = operation.message
+                };
+                _lastOperation.Steps.Add(new OperationStep
+                {
+                    Name = "恢复 Windows 自动跃点数",
+                    Success = operation.success,
+                    Detail = operation.message
+                });
+                _btnDetails.Enabled = true;
+
+                if (operation.success)
+                {
+                    _loading = true;
+                    _chkHard.Checked = false;
+                    _loading = false;
+                    _cfg.HardIsolate = false;
+                    _cfg.LastExit = "";
+                    _cfg.LastExitId = "";
+                    _cfg.Save();
+                }
+
+                _metricsStale = true;
+                await RefreshAdaptersAsync(true);
+                SetStatus(operation.message, !operation.success);
+                if (!operation.success) ShowOperationDetails();
+            }
+            finally
+            {
+                _busy = false;
+                SetBusyUi(false);
+            }
+        }
+
+        private void ShowOperationDetails()
+        {
+            if (_lastOperation == null)
+            {
+                MessageBox.Show(this, "当前还没有可显示的操作记录。", "操作详情",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            MessageBox.Show(this, _lastOperation.ToDetailText(), "操作详情",
+                MessageBoxButtons.OK,
+                _lastOperation.Success ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+        }
+
+        private void CopyDiagnostics()
+        {
+            try
+            {
+                Clipboard.SetText(DiagnosticsService.BuildReport(_adapters, _currentExit, _lastOperation));
+                SetStatus("诊断信息已复制到剪贴板。包含 IP 和网卡标识，分享前请确认接收方可信。");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("复制诊断信息失败。", ex);
+                SetStatus("复制诊断信息失败：" + ex.Message, true);
+            }
+        }
+
+        private void OpenLogFolder()
+        {
+            try
+            {
+                var argument = File.Exists(AppLogger.LogPath)
+                    ? "/select,\"" + AppLogger.LogPath + "\""
+                    : "\"" + AppContext.BaseDirectory + "\"";
+                Process.Start(new ProcessStartInfo("explorer.exe", argument) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("打开日志目录失败。", ex);
+                SetStatus("打开日志目录失败：" + ex.Message, true);
+            }
+        }
+
+        private void ClearLogs()
+        {
+            if (MessageBox.Show(this, "确定清空当前及历史日志吗？", "清空日志",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+
+            if (AppLogger.Clear(out var error))
+            {
+                SetStatus("日志已清空。");
+                AppLogger.Info("用户清空了日志。");
+            }
+            else
+            {
+                SetStatus("清空日志失败：" + error, true);
+            }
+        }
+
+        private void OnNetworkAddressChanged(object sender, EventArgs e) => QueueNetworkRefresh();
+
+        private void OnNetworkAvailabilityChanged(object sender, NetworkAvailabilityEventArgs e) => QueueNetworkRefresh();
+
+        private void QueueNetworkRefresh()
+        {
+            if (IsDisposed || !IsHandleCreated) return;
+            try
+            {
+                BeginInvoke((Action)(() =>
+                {
+                    if (IsDisposed) return;
+                    _networkDebounceTimer.Stop();
+                    _networkDebounceTimer.Start();
+                }));
+            }
+            catch (InvalidOperationException)
+            {
+                // 窗口销毁过程中忽略网络事件。
+            }
+        }
+
         private void SetBusyUi(bool busy)
         {
-            var wiredName = SelectedName(_cardWired.Combo);
-            var wifiName = SelectedName(_cardWifi.Combo);
-            _cardWired.Button.Enabled = !busy &&
-                !string.IsNullOrEmpty(wiredName) && _adapters.Any(a => a.Name == wiredName);
-            _cardWifi.Button.Enabled = !busy &&
-                !string.IsNullOrEmpty(wifiName) && _adapters.Any(a => a.Name == wifiName);
+            _cardWired.Button.Enabled = !busy && SelectedAdapter(_cardWired.Combo) != null;
+            _cardWifi.Button.Enabled = !busy && SelectedAdapter(_cardWifi.Combo) != null;
             _cardWired.Combo.Enabled = !busy;
             _cardWifi.Combo.Enabled = !busy;
             _chkHard.Enabled = !busy;
             _btnRefresh.Enabled = !busy;
+            _btnRestoreDefaults.Enabled = !busy;
+            UpdateTrayMenu();
             Cursor = busy ? Cursors.WaitCursor : Cursors.Default;
         }
 
@@ -980,12 +1218,13 @@ namespace NetSwitcher
 
         private async Task RestoreLastExit()
         {
-            if (string.IsNullOrEmpty(_cfg.LastExit) || !_cfg.RestoreOnStartup) return;
+            if ((string.IsNullOrEmpty(_cfg.LastExitId) && string.IsNullOrEmpty(_cfg.LastExit)) ||
+                !_cfg.RestoreOnStartup) return;
 
             await Task.Delay(1500);
             await RefreshAdaptersAsync(true);
 
-            var last = _adapters.FirstOrDefault(a => a.Name == _cfg.LastExit);
+            var last = NetworkService.FindByIdentity(_adapters, _cfg.LastExitId, _cfg.LastExit);
             if (last == null || !last.CanRoute) return;
 
             if (_currentExit != null && _currentExit.IfIndex == last.IfIndex)
@@ -995,7 +1234,8 @@ namespace NetSwitcher
             }
 
             bool toWired = !last.IsWireless;
-            if (SelectedName(toWired ? _cardWired.Combo : _cardWifi.Combo) != last.Name) return;
+            var selected = SelectedAdapter(toWired ? _cardWired.Combo : _cardWifi.Combo);
+            if (selected == null || !string.Equals(selected.Id, last.Id, StringComparison.OrdinalIgnoreCase)) return;
 
             if (await SwitchTo(toWired, true))
                 SetStatus("已自动恢复上次的上网出口：" + last.Name);
@@ -1003,6 +1243,7 @@ namespace NetSwitcher
 
         private void HideToTray()
         {
+            _timer?.Stop();
             Hide();
             if (!_hideTipShown)
             {
@@ -1013,10 +1254,12 @@ namespace NetSwitcher
             }
         }
 
-        private void ShowWindow()
+        private void ShowWindow(bool refreshAdapters = true)
         {
             if (!Visible) Show();
             WindowState = FormWindowState.Normal;
+            _timer?.Start();
+            if (refreshAdapters && !_busy) FireAndTrack(RefreshAdaptersAsync(true));
             BringToFront();
             Activate();
         }
@@ -1038,8 +1281,12 @@ namespace NetSwitcher
         {
             if (disposing)
             {
+                NetworkChange.NetworkAddressChanged -= OnNetworkAddressChanged;
+                NetworkChange.NetworkAvailabilityChanged -= OnNetworkAvailabilityChanged;
                 _timer?.Stop();
                 _timer?.Dispose();
+                _networkDebounceTimer?.Stop();
+                _networkDebounceTimer?.Dispose();
                 _tray?.Dispose();
             }
             base.Dispose(disposing);
@@ -1091,6 +1338,9 @@ namespace NetSwitcher
             ReplaceFont(_chkHard, 9f);
             ReplaceFont(_chkRestore, 9f);
             ReplaceFont(_statusLabel, 9f);
+            ReplaceFont(_btnDetails, 8f);
+            ReplaceFont(_btnDiagnostics, 8f);
+            ReplaceFont(_btnRestoreDefaults, 8f);
             RefreshCardFonts(_cardWired);
             RefreshCardFonts(_cardWifi);
         }

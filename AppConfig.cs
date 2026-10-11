@@ -11,9 +11,12 @@ namespace NetSwitcher
     public sealed class AppConfig
     {
         public string EthernetAdapter { get; set; } = "";   // 用户指定的有线网卡名
+        public string EthernetAdapterId { get; set; } = ""; // 用户指定的有线网卡稳定 ID
         public string WifiAdapter { get; set; } = "";       // 用户指定的无线网卡名
+        public string WifiAdapterId { get; set; } = "";     // 用户指定的无线网卡稳定 ID
         public bool HardIsolate { get; set; } = false;      // 是否在切换时禁用另一张网卡
         public string LastExit { get; set; } = "";          // 上次设为出口的网卡名
+        public string LastExitId { get; set; } = "";        // 上次出口的稳定 ID
         public bool RestoreOnStartup { get; set; } = true;  // 启动时恢复上次的出口
 
         private static string ConfigDir =>

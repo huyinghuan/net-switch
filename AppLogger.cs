@@ -13,6 +13,8 @@ namespace NetSwitcher
         private static readonly object SyncRoot = new object();
         private static readonly Dictionary<string, DateTimeOffset> LastThrottledEntries =
             new Dictionary<string, DateTimeOffset>();
+        private const long MaxLogBytes = 5 * 1024 * 1024;
+        private const int RetainedLogFiles = 3;
 
         public static string LogPath => Path.Combine(AppContext.BaseDirectory, "NetSwitcher.log");
 
@@ -38,6 +40,29 @@ namespace NetSwitcher
         public static void Fatal(string message, Exception exception = null) =>
             Write("FATAL", message, exception);
 
+        public static bool Clear(out string error)
+        {
+            error = "";
+            try
+            {
+                lock (SyncRoot)
+                {
+                    if (File.Exists(LogPath)) File.Delete(LogPath);
+                    for (var i = 1; i <= RetainedLogFiles; i++)
+                    {
+                        var archived = LogPath + "." + i;
+                        if (File.Exists(archived)) File.Delete(archived);
+                    }
+                }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
         private static void Write(string level, string message, Exception exception)
         {
             try
@@ -54,6 +79,7 @@ namespace NetSwitcher
 
                 lock (SyncRoot)
                 {
+                    RotateIfNeeded(entry.Length * sizeof(char));
                     File.AppendAllText(LogPath, entry, new UTF8Encoding(false));
                 }
             }
@@ -61,6 +87,21 @@ namespace NetSwitcher
             {
                 // 日志系统自身失败时不能再次触发异常。
             }
+        }
+
+        private static void RotateIfNeeded(long incomingBytes)
+        {
+            if (!File.Exists(LogPath)) return;
+            if (new FileInfo(LogPath).Length + incomingBytes <= MaxLogBytes) return;
+
+            var oldest = LogPath + "." + RetainedLogFiles;
+            if (File.Exists(oldest)) File.Delete(oldest);
+            for (var i = RetainedLogFiles - 1; i >= 1; i--)
+            {
+                var source = LogPath + "." + i;
+                if (File.Exists(source)) File.Move(source, LogPath + "." + (i + 1));
+            }
+            File.Move(LogPath, LogPath + ".1");
         }
     }
 }
