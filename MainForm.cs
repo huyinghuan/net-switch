@@ -27,9 +27,9 @@ namespace NetSwitcher
 
         #endregion
 
-        // DPI 缩放系数。AutoScaleMode.None，所有像素尺寸统一乘这个系数，
-        // 避免框架自动缩放与手工布局打架。
-        private static readonly float DpiScale = InitScale();
+        // 布局使用 96 DPI 下的逻辑尺寸，并按窗口当前所在显示器的 DPI 动态换算。
+        // 保持 AutoScaleMode.None，避免框架自动缩放与手工布局重复生效。
+        private float _dpiScale = InitScale();
 
         private static float InitScale()
         {
@@ -45,7 +45,7 @@ namespace NetSwitcher
             }
         }
 
-        private static int S(int v) => Math.Max(1, (int)Math.Round(v * DpiScale));
+        private int S(int v) => Math.Max(1, (int)Math.Round(v * _dpiScale));
 
         private readonly AppConfig _cfg;
         private List<AdapterInfo> _adapters = new List<AdapterInfo>();
@@ -53,7 +53,7 @@ namespace NetSwitcher
         // 界面元素
         private Panel _header, _summary, _cardsHost, _options, _statusBar;
         private Panel _cardLeft, _cardRight;
-        private Label _lblTitle, _lblVer, _sumTitle, _sumSub, _statusLabel;
+        private Label _lblTitle, _lblVer, _sumTip, _sumTitle, _sumSub, _statusLabel;
         private Button _btnClose, _btnMin, _btnRefresh;
         private CheckBox _chkHard, _chkRestore;
 
@@ -99,7 +99,10 @@ namespace NetSwitcher
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.None;
             AutoScaleMode = AutoScaleMode.None;
-            Size = new Size(S(760), S(600));
+            ClientSize = new Size(S(760), S(560));
+            MinimumSize = new Size(S(640), S(480));
+            DoubleBuffered = true;
+            ResizeRedraw = true;
             BackColor = C_Bg;
             ForeColor = C_Text;
             Font = F(9f);
@@ -196,7 +199,7 @@ namespace NetSwitcher
         {
             var panel = new Panel { BackColor = C_Bg };
 
-            var tip = new Label
+            _sumTip = new Label
             {
                 Text = "当前上网出口",
                 ForeColor = C_Muted,
@@ -223,7 +226,7 @@ namespace NetSwitcher
                 Location = new Point(S(20), S(66))
             };
 
-            panel.Controls.Add(tip);
+            panel.Controls.Add(_sumTip);
             panel.Controls.Add(_sumTitle);
             panel.Controls.Add(_sumSub);
             return panel;
@@ -234,11 +237,11 @@ namespace NetSwitcher
             var panel = new Panel { BackColor = C_Bg };
 
             _chkHard = CheckRow("切换时禁用另一张网卡（彻底隔离，切换时另一张会断开）", C_Text);
-            _chkHard.Location = new Point(S(20), S(10));
+            _chkHard.Location = new Point(S(20), S(8));
             _chkHard.CheckedChanged += OnHardIsolateChanged;
 
             _chkRestore = CheckRow("启动时自动恢复上次选择的出口", C_Muted);
-            _chkRestore.Location = new Point(S(20), S(46));
+            _chkRestore.Location = new Point(S(20), S(38));
             _chkRestore.CheckedChanged += (s, e) =>
             {
                 if (_loading) return;
@@ -369,10 +372,10 @@ namespace NetSwitcher
             int w = ClientSize.Width;
             int h = ClientSize.Height;
 
-            int headerH = S(54);
-            int summaryH = S(104);
-            int statusH = S(34);
-            int optionsH = S(80);
+            int headerH = S(50);
+            int summaryH = S(86);
+            int statusH = S(32);
+            int optionsH = S(68);
 
             _header.Bounds = new Rectangle(0, 0, w, headerH);
             _summary.Bounds = new Rectangle(0, headerH, w, summaryH);
@@ -381,18 +384,33 @@ namespace NetSwitcher
             _options.Bounds = new Rectangle(0, h - statusH - optionsH, w, optionsH);
             _statusBar.Bounds = new Rectangle(0, h - statusH, w, statusH);
 
-            _cardsHost.Bounds = new Rectangle(S(16), hostTop + S(4), w - 2 * S(16), h - hostTop - S(4) - optionsH - statusH - S(6));
+            _cardsHost.Bounds = new Rectangle(
+                S(16),
+                hostTop + S(4),
+                Math.Max(S(200), w - 2 * S(16)),
+                Math.Max(S(220), h - hostTop - S(4) - optionsH - statusH - S(6)));
 
-            int gap = S(14);
+            int gap = S(12);
             int cw = (_cardsHost.Width - gap) / 2;
             _cardLeft.Bounds = new Rectangle(0, 0, cw, _cardsHost.Height);
             _cardRight.Bounds = new Rectangle(cw + gap, 0, _cardsHost.Width - cw - gap, _cardsHost.Height);
 
             // 标题栏内部
-            _lblVer.Location = new Point(_lblTitle.Right + S(8), S(22));
-            _btnClose.Location = new Point(w - S(50), S(12));
-            _btnMin.Location = new Point(w - S(84), S(12));
-            _btnRefresh.Location = new Point(w - S(118), S(12));
+            _lblTitle.Location = new Point(S(20), S(13));
+            _lblTitle.MaximumSize = new Size(Math.Max(S(120), w - S(190)), headerH);
+            _lblVer.Location = new Point(_lblTitle.Right + S(8), S(19));
+            _btnClose.Location = new Point(w - S(48), S(10));
+            _btnMin.Location = new Point(w - S(82), S(10));
+            _btnRefresh.Location = new Point(w - S(116), S(10));
+
+            _sumTip.Location = new Point(S(20), S(6));
+            _sumTitle.Location = new Point(S(20), S(24));
+            _sumTitle.MaximumSize = new Size(Math.Max(S(120), w - S(40)), S(30));
+            _sumSub.Location = new Point(S(20), S(57));
+            _sumSub.MaximumSize = new Size(Math.Max(S(120), w - S(40)), S(24));
+
+            _chkHard.Location = new Point(S(20), S(7));
+            _chkRestore.Location = new Point(S(20), S(36));
 
             _statusLabel.Bounds = new Rectangle(S(20), 0, w - S(40), statusH);
 
@@ -400,24 +418,41 @@ namespace NetSwitcher
             LayoutCard(_cardRight, _cardWifi);
         }
 
-        private static void LayoutCard(Panel root, AdapterCard card)
+        private void LayoutCard(Panel root, AdapterCard card)
         {
             int w = root.Width;
             int h = root.Height;
             int pad = S(16);
             int inner = w - 2 * pad;
+            bool compact = h < S(270);
 
-            card.HeadTitle.Location = new Point(pad, S(12));
-            card.Combo.Bounds = new Rectangle(pad, S(42), inner, S(30));
-            card.Status.Bounds = new Rectangle(pad, S(82), inner, S(26));
-            card.Ip.Bounds = new Rectangle(pad, S(112), inner, S(22));
-            card.Gateway.Bounds = new Rectangle(pad, S(138), inner, S(22));
-            card.Extra.Bounds = new Rectangle(pad, S(164), inner, S(22));
-            card.Rate.Bounds = new Rectangle(pad, S(192), inner, S(26));
-            card.Metric.Bounds = new Rectangle(pad, S(222), inner, S(22));
-            card.Button.Bounds = new Rectangle(pad, h - S(16) - S(46), inner, S(46));
+            if (compact)
+            {
+                card.HeadTitle.Location = new Point(pad, S(7));
+                card.Combo.Bounds = new Rectangle(pad, S(30), inner, S(26));
+                card.Status.Bounds = new Rectangle(pad, S(59), inner, S(21));
+                card.Ip.Bounds = new Rectangle(pad, S(82), inner, S(18));
+                card.Gateway.Bounds = new Rectangle(pad, S(102), inner, S(18));
+                card.Extra.Visible = false;
+                card.Rate.Bounds = new Rectangle(pad, S(125), inner, S(21));
+                card.Metric.Bounds = new Rectangle(pad, S(148), inner, S(18));
+                card.Button.Bounds = new Rectangle(pad, h - S(10) - S(38), inner, S(38));
+            }
+            else
+            {
+                card.HeadTitle.Location = new Point(pad, S(10));
+                card.Combo.Bounds = new Rectangle(pad, S(36), inner, S(28));
+                card.Status.Bounds = new Rectangle(pad, S(69), inner, S(23));
+                card.Ip.Bounds = new Rectangle(pad, S(94), inner, S(20));
+                card.Gateway.Bounds = new Rectangle(pad, S(116), inner, S(20));
+                card.Extra.Visible = true;
+                card.Extra.Bounds = new Rectangle(pad, S(138), inner, S(20));
+                card.Rate.Bounds = new Rectangle(pad, S(162), inner, S(23));
+                card.Metric.Bounds = new Rectangle(pad, S(187), inner, S(20));
+                card.Button.Bounds = new Rectangle(pad, h - S(12) - S(40), inner, S(40));
+            }
 
-            card.Badge.Location = new Point(w - pad - card.Badge.Width, S(16));
+            card.Badge.Location = new Point(w - pad - card.Badge.Width, S(13));
         }
 
         private void InitTray()
@@ -635,7 +670,7 @@ namespace NetSwitcher
 
             if (card.Root != null && card.Badge != null)
             {
-                card.Badge.Location = new Point(card.Root.Width - S(16) - card.Badge.Width, S(16));
+                card.Badge.Location = new Point(card.Root.Width - S(16) - card.Badge.Width, S(13));
             }
         }
 
@@ -715,6 +750,7 @@ namespace NetSwitcher
                 catch (Exception ex)
                 {
                     message = "切换失败：" + ex.Message;
+                    AppLogger.Error("切换网络出口时发生异常。", ex);
                 }
 
                 if (ok)
@@ -756,6 +792,7 @@ namespace NetSwitcher
             }
             catch (Exception ex)
             {
+                AppLogger.Error("刷新网卡信息时发生异常。", ex);
                 SetStatus("刷新失败：" + ex.Message, true);
             }
             finally
@@ -809,6 +846,8 @@ namespace NetSwitcher
                 SetStatus(failures.Count == 0
                     ? "已恢复两张网卡同时连接的状态。"
                     : string.Join("；", failures), failures.Count > 0);
+                if (failures.Count > 0)
+                    AppLogger.Warning("恢复网卡启用状态未完全成功：" + string.Join("；", failures));
             }
             finally
             {
@@ -834,7 +873,12 @@ namespace NetSwitcher
 
         private void FireAndTrack(Task task) => task.ContinueWith(t =>
         {
-            if (t.Exception != null) SetStatus("操作出错：" + t.Exception.InnerException?.Message, true);
+            if (t.Exception != null)
+            {
+                var error = t.Exception.GetBaseException();
+                AppLogger.Error("后台操作发生异常。", error);
+                SetStatus("操作出错：" + error.Message, true);
+            }
         }, TaskScheduler.FromCurrentSynchronizationContext());
 
         #endregion
@@ -844,8 +888,51 @@ namespace NetSwitcher
         protected override void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
+            var actualScale = Math.Max(1f, DeviceDpi / 96f);
+            if (Math.Abs(actualScale - _dpiScale) > 0.01f)
+            {
+                _dpiScale = actualScale;
+                ClientSize = new Size(S(760), S(560));
+                MinimumSize = new Size(S(640), S(480));
+                RefreshDpiFonts();
+            }
+            Bounds = FitToWorkingArea(Bounds);
             ApplyRoundedRegion();
             LayoutChrome();
+        }
+
+        protected override void OnDpiChanged(DpiChangedEventArgs e)
+        {
+            SuspendLayout();
+            try
+            {
+                _dpiScale = Math.Max(1f, e.DeviceDpiNew / 96f);
+                base.OnDpiChanged(e);
+                MinimumSize = new Size(S(640), S(480));
+                Bounds = FitToWorkingArea(e.SuggestedRectangle);
+                RefreshDpiFonts();
+                LayoutChrome();
+                ApplyRoundedRegion();
+                Invalidate(true);
+            }
+            finally
+            {
+                ResumeLayout(true);
+            }
+        }
+
+        private Rectangle FitToWorkingArea(Rectangle requested)
+        {
+            var work = Screen.FromRectangle(requested).WorkingArea;
+            var margin = S(12);
+            var width = Math.Min(requested.Width, Math.Max(MinimumSize.Width, work.Width - margin * 2));
+            var height = Math.Min(requested.Height, Math.Max(MinimumSize.Height, work.Height - margin * 2));
+            width = Math.Min(width, work.Width);
+            height = Math.Min(height, work.Height);
+
+            var x = Math.Max(work.Left, Math.Min(requested.X, work.Right - width));
+            var y = Math.Max(work.Top, Math.Min(requested.Y, work.Bottom - height));
+            return new Rectangle(x, y, width, height);
         }
 
         protected override void OnSizeChanged(EventArgs e)
@@ -860,16 +947,20 @@ namespace NetSwitcher
 
         private void ApplyRoundedRegion()
         {
-            using var path = IconFactory.RoundedRect(new Rectangle(0, 0, Width, Height), 12);
+            if (Width <= S(24) || Height <= S(24)) return;
+            using var path = IconFactory.RoundedRect(new Rectangle(0, 0, Width, Height), S(12));
+            var oldRegion = Region;
             Region = new Region(path);
+            oldRegion?.Dispose();
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
+            if (Width <= S(2) || Height <= S(2)) return;
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             using var pen = new Pen(C_Border, 1);
-            using var path = IconFactory.RoundedRect(new Rectangle(0, 0, Width - 1, Height - 1), 12);
+            using var path = IconFactory.RoundedRect(new Rectangle(0, 0, Width - 1, Height - 1), S(12));
             e.Graphics.DrawPath(pen, path);
         }
 
@@ -984,6 +1075,46 @@ namespace NetSwitcher
             {
                 return new Font(SystemFonts.DefaultFont.FontFamily, size, style, GraphicsUnit.Point);
             }
+        }
+
+        private void RefreshDpiFonts()
+        {
+            ReplaceFont(this, 9f);
+            ReplaceFont(_lblTitle, 11.5f, FontStyle.Bold);
+            ReplaceFont(_lblVer, 8f);
+            ReplaceFont(_btnClose, 10f);
+            ReplaceFont(_btnMin, 10f);
+            ReplaceFont(_btnRefresh, 10f);
+            ReplaceFont(_sumTip, 9f);
+            ReplaceFont(_sumTitle, 15f, FontStyle.Bold);
+            ReplaceFont(_sumSub, 9f);
+            ReplaceFont(_chkHard, 9f);
+            ReplaceFont(_chkRestore, 9f);
+            ReplaceFont(_statusLabel, 9f);
+            RefreshCardFonts(_cardWired);
+            RefreshCardFonts(_cardWifi);
+        }
+
+        private static void RefreshCardFonts(AdapterCard card)
+        {
+            ReplaceFont(card.HeadTitle, 10.5f, FontStyle.Bold);
+            ReplaceFont(card.Combo, 9.5f);
+            ReplaceFont(card.Status, 10f, FontStyle.Bold);
+            ReplaceFont(card.Ip, 9f);
+            ReplaceFont(card.Gateway, 9f);
+            ReplaceFont(card.Extra, 8.5f);
+            ReplaceFont(card.Rate, 9.5f, FontStyle.Bold);
+            ReplaceFont(card.Metric, 9f);
+            ReplaceFont(card.Badge, 8.5f, FontStyle.Bold);
+            ReplaceFont(card.Button, 10f, FontStyle.Bold);
+        }
+
+        private static void ReplaceFont(Control control, float size, FontStyle style = FontStyle.Regular)
+        {
+            if (control == null) return;
+            var previous = control.Font;
+            control.Font = F(size, style);
+            previous?.Dispose();
         }
 
         private sealed class AdapterCard

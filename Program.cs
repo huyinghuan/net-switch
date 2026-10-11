@@ -1,38 +1,48 @@
 using System;
-using System.IO;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace NetSwitcher
 {
     internal static class Program
     {
-        private static string LogPath =>
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "NetSwitcher", "error.log");
-
         [STAThread]
         private static void Main()
         {
             ApplicationConfiguration.Initialize();
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
-            Application.ThreadException += (s, e) => Log(e.Exception);
-            AppDomain.CurrentDomain.UnhandledException += (s, e) => Log(e.ExceptionObject as Exception);
+            Application.ThreadException += (s, e) =>
+                AppLogger.Fatal("UI 线程发生未处理异常。", e.Exception);
+            AppDomain.CurrentDomain.UnhandledException += (s, e) =>
+            {
+                var ex = e.ExceptionObject as Exception;
+                AppLogger.Fatal(
+                    e.IsTerminating ? "进程即将因未处理异常终止。" : "后台线程发生未处理异常。",
+                    ex ?? new Exception(e.ExceptionObject?.ToString() ?? "未知异常"));
+            };
+            TaskScheduler.UnobservedTaskException += (s, e) =>
+            {
+                AppLogger.Error("后台任务异常未被观察。", e.Exception);
+                e.SetObserved();
+            };
 
-            Application.Run(new MainForm());
-        }
-
-        private static void Log(Exception ex)
-        {
-            if (ex == null) return;
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(LogPath));
-                File.AppendAllText(LogPath,
-                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {ex.GetType().Name}: {ex.Message}\r\n{ex.StackTrace}\r\n\r\n");
+                AppLogger.Info("NetSwitcher 启动。日志文件：" + AppLogger.LogPath);
+                Application.Run(new MainForm());
             }
-            catch
+            catch (Exception ex)
             {
-                // 日志失败时不再抛出
+                AppLogger.Fatal("主程序发生致命异常。", ex);
+                MessageBox.Show(
+                    "程序发生错误并即将退出。详细信息已写入：\n" + AppLogger.LogPath,
+                    "NetSwitcher",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
+            finally
+            {
+                AppLogger.Info("NetSwitcher 退出。");
             }
         }
     }

@@ -304,6 +304,7 @@ namespace NetSwitcher
                 message = execution.TimedOut
                     ? "切换超时，系统网络服务可能没有响应。"
                     : "切换命令执行失败：" + ShortError(execution.StandardError);
+                AppLogger.Error(message);
                 return false;
             }
 
@@ -312,12 +313,14 @@ namespace NetSwitcher
             if (!RefreshMetrics(check))
             {
                 message = "切换命令已执行，但无法回读网卡跃点数进行确认。";
+                AppLogger.Error(message);
                 return false;
             }
             var verify = check.FirstOrDefault(a => a.IfIndex == target.IfIndex);
             if (verify == null || verify.Metric != PreferredMetric)
             {
                 message = "未能修改网卡跃点数，请以管理员身份运行本程序后重试。";
+                AppLogger.Error(message);
                 return false;
             }
 
@@ -327,6 +330,7 @@ namespace NetSwitcher
                 if (otherVerify == null || otherVerify.Metric != SecondaryMetric)
                 {
                     message = "目标出口已设置，但未能确认备用网卡的跃点数。";
+                    AppLogger.Error(message);
                     return false;
                 }
             }
@@ -364,6 +368,7 @@ namespace NetSwitcher
             message = result.TimedOut
                 ? "操作网卡「" + adapter.Name + "」超时。"
                 : "操作网卡「" + adapter.Name + "」失败：" + ShortError(result.StandardError);
+            AppLogger.Error(message);
             return false;
         }
 
@@ -393,7 +398,14 @@ namespace NetSwitcher
 
             var execution = RunPowerShell(script);
             var raw = execution.StandardOutput;
-            if (!execution.Success || string.IsNullOrWhiteSpace(raw)) return false;
+            if (!execution.Success || string.IsNullOrWhiteSpace(raw))
+            {
+                AppLogger.WarningThrottled(
+                    "refresh-metrics",
+                    "读取网卡跃点数失败：" + ShortError(execution.StandardError),
+                    TimeSpan.FromMinutes(1));
+                return false;
+            }
 
             var map = new Dictionary<int, int[]>();
             try
@@ -408,8 +420,9 @@ namespace NetSwitcher
                     AddNode(doc.RootElement, map);
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                AppLogger.Error("解析网卡跃点数信息失败。", ex);
                 return false;
             }
 
@@ -483,6 +496,10 @@ namespace NetSwitcher
                     try { p.Kill(true); } catch { }
                     if (!p.WaitForExit(5000))
                     {
+                        AppLogger.WarningThrottled(
+                            "powershell-timeout",
+                            "PowerShell 执行超时且无法终止。",
+                            TimeSpan.FromMinutes(1));
                         return new PowerShellResult
                         {
                             TimedOut = true,
@@ -511,6 +528,7 @@ namespace NetSwitcher
             }
             catch (Exception ex)
             {
+                AppLogger.Error("启动或执行 PowerShell 时发生异常。", ex);
                 return new PowerShellResult { StandardError = ex.Message };
             }
         }

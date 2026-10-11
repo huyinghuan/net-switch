@@ -32,9 +32,10 @@ namespace NetSwitcher
                     if (cfg != null) return cfg;
                 }
             }
-            catch
+            catch (Exception ex)
             {
                 // 配置文件损坏时忽略，退回默认值
+                AppLogger.Error("读取配置文件失败，将使用默认配置。", ex);
             }
             return new AppConfig();
         }
@@ -49,9 +50,10 @@ namespace NetSwitcher
                 File.WriteAllText(tempPath, JsonSerializer.Serialize(this, options));
                 File.Move(tempPath, ConfigPath, true);
             }
-            catch
+            catch (Exception ex)
             {
                 // 保存失败不影响主功能
+                AppLogger.Error("保存配置文件失败。", ex);
                 try
                 {
                     if (File.Exists(tempPath)) File.Delete(tempPath);

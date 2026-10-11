@@ -50,7 +50,8 @@ namespace NetSwitcher
             }
             finally
             {
-                DestroyIcon(handle);
+                if (!DestroyIcon(handle))
+                    AppLogger.Warning("释放应用图标句柄失败，Win32 错误码：" + Marshal.GetLastWin32Error());
             }
         }
 
