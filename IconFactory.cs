@@ -6,12 +6,34 @@ using System.Runtime.InteropServices;
 namespace NetSwitcher
 {
     /// <summary>
-    /// 程序图标与圆角路径的工具类：图标在运行时用 GDI+ 画出来，不依赖外部图片资源文件。
+    /// 程序图标与圆角路径的工具类。
     /// </summary>
     public static class IconFactory
     {
         public static readonly Color WiredColor = ColorTranslator.FromHtml("#4A9EFF");
         public static readonly Color WifiColor = ColorTranslator.FromHtml("#A78BFA");
+
+        /// <summary>
+        /// 从当前 EXE 读取构建时嵌入的多尺寸图标；读取失败时回退到运行时绘制的简易图标。
+        /// 返回独立克隆，调用方负责释放。
+        /// </summary>
+        public static Icon LoadApplicationIcon()
+        {
+            try
+            {
+                var executable = Environment.ProcessPath;
+                if (!string.IsNullOrWhiteSpace(executable))
+                {
+                    using var extracted = Icon.ExtractAssociatedIcon(executable);
+                    if (extracted != null) return (Icon)extracted.Clone();
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warning("读取嵌入式应用图标失败，将使用备用图标：" + ex.Message);
+            }
+            return Create(WiredColor);
+        }
 
         public static Icon Create(Color accent)
         {

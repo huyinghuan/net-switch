@@ -65,6 +65,7 @@ namespace NetSwitcher
 
         private NotifyIcon _tray;
         private ContextMenuStrip _trayMenu;
+        private Icon _applicationIcon;
         private System.Windows.Forms.Timer _timer;
         private System.Windows.Forms.Timer _networkDebounceTimer;
         private ToolStripLabel _trayStatus;
@@ -124,7 +125,8 @@ namespace NetSwitcher
             BackColor = C_Bg;
             ForeColor = C_Text;
             Font = F(9f);
-            Icon = IconFactory.Create(IconFactory.WiredColor);
+            _applicationIcon = IconFactory.LoadApplicationIcon();
+            Icon = _applicationIcon;
             MaximizeBox = false;
 
             _header = BuildHeader();
@@ -515,7 +517,7 @@ namespace NetSwitcher
         {
             _tray = new NotifyIcon
             {
-                Icon = IconFactory.Create(IconFactory.WiredColor),
+                Icon = _applicationIcon,
                 Text = "网络一键切换器",
                 Visible = true
             };
@@ -1448,6 +1450,8 @@ namespace NetSwitcher
                 _networkDebounceTimer?.Dispose();
                 _tray?.Dispose();
                 _trayMenu?.Dispose();
+                _applicationIcon?.Dispose();
+                _applicationIcon = null;
             }
             base.Dispose(disposing);
         }

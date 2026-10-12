@@ -44,6 +44,7 @@
                       Directory="ProgramMenuFolder"
                       Name="网络一键切换器"
                       Description="一键切换有线与 Wi-Fi 上网出口"
+                      Icon="NetSwitcher.exe"
                       WorkingDirectory="INSTALLFOLDER"
                       Advertise="yes" />
           </File>
@@ -60,6 +61,9 @@
         </Component>
       </Directory>
     </StandardDirectory>
+
+    <!-- 广告快捷方式要求 Icon 表主键扩展名与目标 EXE 一致。 -->
+    <Icon Id="NetSwitcher.exe" SourceFile="..\Assets\NetSwitcher.ico" />
 
     <Feature Id="MainFeature" Title="网络一键切换器" Level="1">
       <ComponentRef Id="MainExecutable" />
