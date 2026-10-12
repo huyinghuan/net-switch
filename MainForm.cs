@@ -55,6 +55,7 @@ namespace NetSwitcher
 
         // 界面元素
         private Panel _header, _summary, _cardsHost, _options, _statusBar;
+        private LoadingOverlay _loadingOverlay;
         private Panel _cardLeft, _cardRight;
         private Label _lblTitle, _lblVer, _sumTip, _sumTitle, _sumSub, _statusLabel;
         private Button _btnClose, _btnMin, _btnRefresh, _btnUpdate, _btnDetails, _btnDiagnostics, _btnRestoreDefaults;
@@ -138,12 +139,18 @@ namespace NetSwitcher
             _cardsHost.Controls.Add(_cardRight);
             _options = BuildOptionsArea();
             _statusBar = BuildStatusArea();
+            _loadingOverlay = new LoadingOverlay
+            {
+                Visible = false,
+                Font = F(10f, FontStyle.Bold)
+            };
 
             Controls.Add(_cardsHost);
             Controls.Add(_options);
             Controls.Add(_statusBar);
             Controls.Add(_summary);
             Controls.Add(_header);
+            Controls.Add(_loadingOverlay);
 
             _cardWired.Button.Click += (s, e) => FireAndTrack(SwitchTo(true, false));
             _cardWifi.Button.Click += (s, e) => FireAndTrack(SwitchTo(false, false));
@@ -471,6 +478,8 @@ namespace NetSwitcher
             _btnDetails.Bounds = new Rectangle(_btnDiagnostics.Left - S(76), 0, S(74), statusH);
             _btnUpdate.Bounds = new Rectangle(_btnDetails.Left - S(76), 0, S(74), statusH);
             _statusLabel.Bounds = new Rectangle(S(20), 0, Math.Max(S(100), _btnUpdate.Left - S(28)), statusH);
+            _loadingOverlay.Bounds = ClientRectangle;
+            if (_loadingOverlay.Visible) _loadingOverlay.BringToFront();
 
             LayoutCard(_cardLeft, _cardWired);
             LayoutCard(_cardRight, _cardWifi);
@@ -900,14 +909,22 @@ namespace NetSwitcher
 
             _busy = true;
             SetBusyUi(true);
-            SetStatus("正在切换并验证「" + target.Name + "」…");
+            var initialMessage = "正在准备切换到「" + target.Name + "」…";
+            ShowLoading(initialMessage);
+            SetStatus(initialMessage);
 
             bool hard = _chkHard.Checked;
             try
             {
                 try
                 {
-                    _lastOperation = await NetworkService.SwitchExitWithRollbackAsync(target, other, hard);
+                    var progress = new Progress<string>(message =>
+                    {
+                        ShowLoading(message);
+                        SetStatus(message);
+                    });
+                    _lastOperation = await NetworkService.SwitchExitWithRollbackAsync(
+                        target, other, hard, progress);
                 }
                 catch (Exception ex)
                 {
@@ -942,6 +959,7 @@ namespace NetSwitcher
             }
             finally
             {
+                HideLoading();
                 _busy = false;
                 SetBusyUi(false);
             }
@@ -996,6 +1014,7 @@ namespace NetSwitcher
 
             _busy = true;
             SetBusyUi(true);
+            ShowLoading("正在恢复双网卡连接…");
             try
             {
                 var failures = await Task.Run(() =>
@@ -1018,6 +1037,7 @@ namespace NetSwitcher
             }
             finally
             {
+                HideLoading();
                 _busy = false;
                 SetBusyUi(false);
             }
@@ -1042,6 +1062,7 @@ namespace NetSwitcher
             _busy = true;
             SetBusyUi(true);
             SetStatus("正在恢复 Windows 自动网络设置…");
+            ShowLoading("正在恢复 Windows 自动网络设置…");
             try
             {
                 var operation = await Task.Run(() =>
@@ -1080,6 +1101,7 @@ namespace NetSwitcher
             }
             finally
             {
+                HideLoading();
                 _busy = false;
                 SetBusyUi(false);
             }
@@ -1269,6 +1291,16 @@ namespace NetSwitcher
             UpdateTrayMenu();
             Cursor = busy ? Cursors.WaitCursor : Cursors.Default;
         }
+
+        private void ShowLoading(string message)
+        {
+            if (_loadingOverlay == null) return;
+            _loadingOverlay.Start(message);
+            _loadingOverlay.Bounds = ClientRectangle;
+            _loadingOverlay.BringToFront();
+        }
+
+        private void HideLoading() => _loadingOverlay?.Stop();
 
         private void FireAndTrack(Task task) => task.ContinueWith(t =>
         {
@@ -1506,6 +1538,7 @@ namespace NetSwitcher
             ReplaceFont(_btnDetails, 8f);
             ReplaceFont(_btnDiagnostics, 8f);
             ReplaceFont(_btnRestoreDefaults, 8f);
+            ReplaceFont(_loadingOverlay, 10f, FontStyle.Bold);
             RefreshCardFonts(_cardWired);
             RefreshCardFonts(_cardWifi);
         }
@@ -1530,6 +1563,107 @@ namespace NetSwitcher
             var previous = control.Font;
             control.Font = F(size, style);
             previous?.Dispose();
+        }
+
+        private sealed class LoadingOverlay : Control
+        {
+            private readonly System.Windows.Forms.Timer _animationTimer;
+            private int _frame;
+
+            public LoadingOverlay()
+            {
+                SetStyle(ControlStyles.UserPaint |
+                         ControlStyles.AllPaintingInWmPaint |
+                         ControlStyles.OptimizedDoubleBuffer |
+                         ControlStyles.ResizeRedraw, true);
+                BackColor = C_Bg;
+                ForeColor = C_Text;
+                Cursor = Cursors.WaitCursor;
+                TabStop = false;
+                _animationTimer = new System.Windows.Forms.Timer { Interval = 70 };
+                _animationTimer.Tick += (s, e) =>
+                {
+                    _frame = (_frame + 1) % 12;
+                    Invalidate();
+                };
+            }
+
+            public void Start(string message)
+            {
+                Text = string.IsNullOrWhiteSpace(message) ? "正在处理…" : message;
+                _frame = 0;
+                Visible = true;
+                _animationTimer.Start();
+                Invalidate();
+            }
+
+            public void Stop()
+            {
+                _animationTimer.Stop();
+                Visible = false;
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                e.Graphics.Clear(C_Bg);
+                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+                var scale = Math.Max(1f, DeviceDpi / 96f);
+                var center = new PointF(Width / 2f, Height / 2f - 22f * scale);
+                var innerRadius = 15f * scale;
+                var outerRadius = 27f * scale;
+                var penWidth = 4.2f * scale;
+
+                for (var i = 0; i < 12; i++)
+                {
+                    var distance = (i - _frame + 12) % 12;
+                    var alpha = Math.Max(38, 245 - distance * 18);
+                    var angle = (float)(i * Math.PI * 2 / 12 - Math.PI / 2);
+                    var start = new PointF(
+                        center.X + (float)Math.Cos(angle) * innerRadius,
+                        center.Y + (float)Math.Sin(angle) * innerRadius);
+                    var end = new PointF(
+                        center.X + (float)Math.Cos(angle) * outerRadius,
+                        center.Y + (float)Math.Sin(angle) * outerRadius);
+                    using var pen = new Pen(Color.FromArgb(alpha, C_Wired), penWidth)
+                    {
+                        StartCap = LineCap.Round,
+                        EndCap = LineCap.Round
+                    };
+                    e.Graphics.DrawLine(pen, start, end);
+                }
+
+                var messageRect = new Rectangle(
+                    (int)(24 * scale),
+                    (int)(center.Y + 43 * scale),
+                    Math.Max(1, Width - (int)(48 * scale)),
+                    (int)(30 * scale));
+                TextRenderer.DrawText(e.Graphics, Text, Font, messageRect, C_Text,
+                    TextFormatFlags.HorizontalCenter |
+                    TextFormatFlags.VerticalCenter |
+                    TextFormatFlags.EndEllipsis |
+                    TextFormatFlags.SingleLine);
+
+                var hintRect = new Rectangle(
+                    (int)(24 * scale),
+                    messageRect.Bottom + (int)(4 * scale),
+                    Math.Max(1, Width - (int)(48 * scale)),
+                    (int)(24 * scale));
+                TextRenderer.DrawText(e.Graphics, "正在安全处理网络配置，请稍候", Font, hintRect, C_Muted,
+                    TextFormatFlags.HorizontalCenter |
+                    TextFormatFlags.VerticalCenter |
+                    TextFormatFlags.SingleLine);
+            }
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing)
+                {
+                    _animationTimer.Stop();
+                    _animationTimer.Dispose();
+                }
+                base.Dispose(disposing);
+            }
         }
 
         private sealed class AdapterCard

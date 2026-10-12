@@ -264,7 +264,8 @@ namespace NetSwitcher
         #region 切换
 
         public static async Task<SwitchResult> SwitchExitWithRollbackAsync(
-            AdapterInfo target, AdapterInfo other, bool hardIsolate)
+            AdapterInfo target, AdapterInfo other, bool hardIsolate,
+            IProgress<string> progress = null)
         {
             var result = new SwitchResult();
             if (target == null)
@@ -275,6 +276,7 @@ namespace NetSwitcher
             }
 
             var selected = new[] { target, other }.Where(a => a != null).Distinct().ToArray();
+            progress?.Report("正在保存当前网络配置…");
             var captured = await Task.Run(() => TryCaptureConfiguration(selected, out var snapshot, out var error)
                 ? (success: true, snapshot, error: "")
                 : (success: false, snapshot: (NetworkConfigurationSnapshot)null, error));
@@ -291,12 +293,14 @@ namespace NetSwitcher
                 return result;
             }
 
+            progress?.Report("正在应用新的出口设置…");
             var applied = await Task.Run(() => SetExit(target, other, hardIsolate, out var message)
                 ? (success: true, message)
                 : (success: false, message));
             result.Steps.Add(new OperationStep { Name = "应用出口配置", Success = applied.success, Detail = applied.message });
             if (!applied.success)
             {
+                progress?.Report("切换未完成，正在恢复原网络配置…");
                 await RollBackAsync(captured.snapshot, result);
                 result.Message = result.RolledBack
                     ? "切换未完成，已恢复原网络配置。"
@@ -306,6 +310,7 @@ namespace NetSwitcher
             }
 
             AdapterInfo verifiedTarget = null;
+            progress?.Report("正在等待目标网卡获取网络地址…");
             for (var attempt = 0; attempt < 8; attempt++)
             {
                 await Task.Delay(attempt == 0 ? 700 : 900);
@@ -326,6 +331,7 @@ namespace NetSwitcher
 
             if (addressReady)
             {
+                progress?.Report("正在验证网关、DNS 和公网连接…");
                 var connectivity = await ConnectivityService.CheckAsync(verifiedTarget);
                 result.Steps.AddRange(connectivity);
             }
@@ -333,6 +339,7 @@ namespace NetSwitcher
             var internetOk = result.Steps.Any(s => s.Name == "公网 HTTPS" && s.Success);
             if (!addressReady || !internetOk)
             {
+                progress?.Report("联网验证未通过，正在安全回滚…");
                 await RollBackAsync(captured.snapshot, result);
                 result.Message = result.RolledBack
                     ? "新出口无法访问公网，已自动恢复原网络配置。"
@@ -341,6 +348,7 @@ namespace NetSwitcher
                 return result;
             }
 
+            progress?.Report("切换完成，正在刷新界面…");
             result.Success = true;
             result.Message = "已切换到「" + target.Name + "」，联网检测通过。";
             AppLogger.Info(result.ToDetailText());
