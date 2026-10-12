@@ -1,0 +1,107 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Windows release
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build MSI and standalone EXE
+        shell: pwsh
+        run: .\build-msi.ps1
+
+      - name: Prepare release files
+        id: meta
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          [xml]$project = Get-Content -LiteralPath "NetSwitcher.csproj" -Raw
+          $version = $project.SelectSingleNode("/Project/PropertyGroup/Version").InnerText.Trim()
+
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $tagVersion = $env:GITHUB_REF_NAME -replace '^v', ''
+            if ($tagVersion -ne $version) {
+              throw "Git tag version '$tagVersion' does not match project version '$version'."
+            }
+          }
+
+          $releaseDir = Join-Path $PWD "artifacts\release"
+          if (Test-Path -LiteralPath $releaseDir) {
+            Remove-Item -LiteralPath $releaseDir -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
+
+          $msiSource = Join-Path $PWD "artifacts\NetSwitcher-Setup-$version-x64.msi"
+          $exeSource = Join-Path $PWD "artifacts\portable\NetSwitcher.exe"
+          $msiTarget = Join-Path $releaseDir "NetSwitcher-Setup-$version-x64.msi"
+          $exeTarget = Join-Path $releaseDir "NetSwitcher-Portable-$version-x64.exe"
+
+          Copy-Item -LiteralPath $msiSource -Destination $msiTarget -Force
+          Copy-Item -LiteralPath $exeSource -Destination $exeTarget -Force
+
+          $checksums = Get-ChildItem -LiteralPath $releaseDir -File |
+            Sort-Object Name |
+            ForEach-Object {
+              $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              "$hash *$($_.Name)"
+            }
+          $checksums | Set-Content -LiteralPath (Join-Path $releaseDir "SHA256SUMS.txt") -Encoding ascii
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: NetSwitcher-${{ steps.meta.outputs.version }}-windows-x64
+          path: artifacts/release/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $false
+          $tag = $env:GITHUB_REF_NAME
+          $files = @(Get-ChildItem -LiteralPath "artifacts\release" -File | Select-Object -ExpandProperty FullName)
+
+          & gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            & gh release upload $tag @files --clobber --repo $env:GITHUB_REPOSITORY
+          }
+          else {
+            & gh release create $tag @files `
+              --verify-tag `
+              --title "NetSwitcher $tag" `
+              --generate-notes `
+              --repo $env:GITHUB_REPOSITORY
+          }
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub Release publishing failed with exit code $LASTEXITCODE."
+          }

@@ -123,6 +123,31 @@ artifacts\portable\NetSwitcher.exe
 .\build-msi.ps1 -Version 1.0.1
 ```
 
+## GitHub Actions 自动发布
+
+仓库包含 `.github/workflows/release.yml`，支持以下两种运行方式：
+
+- 在 GitHub Actions 页面手动运行：自动构建并上传工作流产物，但不创建 Release。
+- 推送 `v*` 格式的 Git 标签：自动构建、生成 SHA-256 校验文件，并创建 GitHub Release。
+
+发布前，需要先把 `NetSwitcher.csproj` 中的 `Version` 改为新版本，并提交代码。Git 标签中的版本号必须与项目版本完全一致。
+
+例如发布 `1.0.1`：
+
+```powershell
+git tag v1.0.1
+git push origin main
+git push origin v1.0.1
+```
+
+Release 会包含：
+
+```text
+NetSwitcher-Setup-1.0.1-x64.msi
+NetSwitcher-Portable-1.0.1-x64.exe
+SHA256SUMS.txt
+```
+
 ## 注意事项
 
 - 切换网络时，正在进行的下载、远程连接或视频会议可能短暂中断。
