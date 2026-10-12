@@ -17,6 +17,7 @@ NetSwitcher 是一款面向 Windows 的轻量网络出口切换工具，用于�
 - 支持启动时恢复上次使用的出口。
 - 最小化到系统托盘，可直接从右键菜单切换网络。
 - 提供操作详情、诊断信息复制、日志查看和日志清理。
+- 支持手动检查 GitHub Release，并下载、校验和安装新版本。
 - 限制程序只能运行一个实例。
 
 ## 系统要求
@@ -61,6 +62,19 @@ NetSwitcher 是一款面向 Windows 的轻量网络出口切换工具，用于�
 启用“切换时禁用另一张网卡”后，程序会进入隔离模式。该模式更彻底，但切换期间可能出现短暂断网。
 
 如果不再需要程序管理网络优先级，可以点击“恢复系统默认”，重新启用所选网卡并恢复 Windows 自动跃点数。
+
+## 软件更新
+
+程序不会在后台自动检查更新。需要时可点击主界面底部的“检查更新”，或使用托盘菜单中的“检查软件更新”。
+
+检查更新时，程序会读取 `huyinghuan/net-switch` 仓库的最新正式 GitHub Release。断网、连接超时、GitHub 限流、仓库无 Release 或发布文件不完整时都会显示明确提示，不会影响当前版本继续运行。
+
+程序会自动识别当前运行方式：
+
+- MSI 安装版下载对应 MSI，退出当前程序后通过 Windows Installer 覆盖升级，然后重新启动。
+- 独立 EXE 下载对应的 Portable EXE，退出当前程序后安全替换原文件，然后重新启动。
+
+更新包必须通过 GitHub Release 资源摘要或 `SHA256SUMS.txt` 中的 SHA-256 校验，否则不会安装。自动更新要求 Release 中同时包含与版本号匹配的 MSI、Portable EXE 和校验文件。
 
 ## 安全切换与自动恢复
 
@@ -109,7 +123,7 @@ artifacts\NetSwitcher-Setup-版本号-x64.msi
 artifacts\portable\NetSwitcher.exe
 ```
 
-发布新版本前，请修改 `NetSwitcher.csproj` 中的 `Version`。
+发布新版本前，请修改 `NetSwitcher.csproj` 中的 `Version`。程序使用这个版本号判断是否存在更新。
 
 也可以在 PowerShell 中运行：
 
@@ -120,7 +134,7 @@ artifacts\portable\NetSwitcher.exe
 或者指定版本号：
 
 ```powershell
-.\build-msi.ps1 -Version 1.0.1
+.\build-msi.ps1 -Version 1.1.0
 ```
 
 ## GitHub Actions 自动发布
@@ -132,19 +146,19 @@ artifacts\portable\NetSwitcher.exe
 
 发布前，需要先把 `NetSwitcher.csproj` 中的 `Version` 改为新版本，并提交代码。Git 标签中的版本号必须与项目版本完全一致。
 
-例如发布 `1.0.1`：
+例如发布 `1.1.0`：
 
 ```powershell
-git tag v1.0.1
+git tag v1.1.0
 git push origin main
-git push origin v1.0.1
+git push origin v1.1.0
 ```
 
 Release 会包含：
 
 ```text
-NetSwitcher-Setup-1.0.1-x64.msi
-NetSwitcher-Portable-1.0.1-x64.exe
+NetSwitcher-Setup-1.1.0-x64.msi
+NetSwitcher-Portable-1.1.0-x64.exe
 SHA256SUMS.txt
 ```
 
@@ -153,4 +167,4 @@ SHA256SUMS.txt
 - 切换网络时，正在进行的下载、远程连接或视频会议可能短暂中断。
 - 部分公司网络、VPN 或安全软件可能限制网络配置修改或公网检测。
 - 安装包和 EXE 当前未进行数字签名，Windows SmartScreen 可能显示安全提醒。
-- 安装新版 MSI 前，建议先从托盘菜单彻底退出正在运行的旧版本。
+- 通过程序内“检查更新”升级时，程序会自动退出并在升级完成后重新启动；手动安装 MSI 时仍建议先退出旧版本。

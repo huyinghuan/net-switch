@@ -57,7 +57,7 @@ namespace NetSwitcher
         private Panel _header, _summary, _cardsHost, _options, _statusBar;
         private Panel _cardLeft, _cardRight;
         private Label _lblTitle, _lblVer, _sumTip, _sumTitle, _sumSub, _statusLabel;
-        private Button _btnClose, _btnMin, _btnRefresh, _btnDetails, _btnDiagnostics, _btnRestoreDefaults;
+        private Button _btnClose, _btnMin, _btnRefresh, _btnUpdate, _btnDetails, _btnDiagnostics, _btnRestoreDefaults;
         private CheckBox _chkHard, _chkRestore;
 
         private readonly AdapterCard _cardWired = new AdapterCard();
@@ -68,11 +68,12 @@ namespace NetSwitcher
         private System.Windows.Forms.Timer _timer;
         private System.Windows.Forms.Timer _networkDebounceTimer;
         private ToolStripLabel _trayStatus;
-        private ToolStripMenuItem _trayWired, _trayWifi;
+        private ToolStripMenuItem _trayWired, _trayWifi, _trayUpdate;
         private bool _loading = true;
         private bool _syncing;
         private bool _busy;
         private bool _refreshing;
+        private bool _checkingForUpdate;
         private bool _metricsStale;
         private bool _hideTipShown;
 
@@ -165,7 +166,7 @@ namespace NetSwitcher
 
             _lblVer = new Label
             {
-                Text = "v1.0",
+                Text = "v" + UpdateService.CurrentVersionText,
                 ForeColor = C_Muted,
                 Font = F(8f),
                 AutoSize = true
@@ -297,6 +298,9 @@ namespace NetSwitcher
             _btnDetails.Enabled = false;
             _btnDetails.Click += (s, e) => ShowOperationDetails();
 
+            _btnUpdate = MakeFooterButton("检查更新");
+            _btnUpdate.Click += (s, e) => FireAndTrack(CheckForUpdates());
+
             _btnDiagnostics = MakeFooterButton("复制诊断");
             _btnDiagnostics.Click += (s, e) => CopyDiagnostics();
 
@@ -304,6 +308,7 @@ namespace NetSwitcher
             _btnRestoreDefaults.Click += (s, e) => FireAndTrack(RestoreWindowsDefaults());
 
             panel.Controls.Add(_statusLabel);
+            panel.Controls.Add(_btnUpdate);
             panel.Controls.Add(_btnDetails);
             panel.Controls.Add(_btnDiagnostics);
             panel.Controls.Add(_btnRestoreDefaults);
@@ -462,7 +467,8 @@ namespace NetSwitcher
             _btnRestoreDefaults.Bounds = new Rectangle(w - S(112), 0, S(104), statusH);
             _btnDiagnostics.Bounds = new Rectangle(_btnRestoreDefaults.Left - S(78), 0, S(76), statusH);
             _btnDetails.Bounds = new Rectangle(_btnDiagnostics.Left - S(76), 0, S(74), statusH);
-            _statusLabel.Bounds = new Rectangle(S(20), 0, Math.Max(S(100), _btnDetails.Left - S(28)), statusH);
+            _btnUpdate.Bounds = new Rectangle(_btnDetails.Left - S(76), 0, S(74), statusH);
+            _statusLabel.Bounds = new Rectangle(S(20), 0, Math.Max(S(100), _btnUpdate.Left - S(28)), statusH);
 
             LayoutCard(_cardLeft, _cardWired);
             LayoutCard(_cardRight, _cardWifi);
@@ -554,6 +560,12 @@ namespace NetSwitcher
             _trayMenu.Items.Add(toolsGroup);
             _trayMenu.Items.Add(MakeTrayAction("查看最近操作详情", (s, e) => ShowOperationDetails()));
             _trayMenu.Items.Add(MakeTrayAction("复制诊断信息", (s, e) => CopyDiagnostics()));
+            _trayUpdate = MakeTrayAction("检查软件更新", (s, e) =>
+            {
+                ShowWindow(false);
+                FireAndTrack(CheckForUpdates());
+            });
+            _trayMenu.Items.Add(_trayUpdate);
             _trayMenu.Items.Add(MakeTrayAction("打开日志所在文件夹", (s, e) => OpenLogFolder()));
             _trayMenu.Items.Add(MakeTrayAction("清空日志", (s, e) => ClearLogs()));
             _trayMenu.Items.Add(MakeTraySeparator());
@@ -1099,6 +1111,94 @@ namespace NetSwitcher
             }
         }
 
+        private async Task CheckForUpdates()
+        {
+            if (_checkingForUpdate || _busy || _refreshing) return;
+            _checkingForUpdate = true;
+            _btnUpdate.Enabled = false;
+            if (_trayUpdate != null) _trayUpdate.Enabled = false;
+            SetStatus("正在连接 GitHub 检查更新…");
+
+            try
+            {
+                var update = await UpdateService.CheckForUpdatesAsync(System.Threading.CancellationToken.None);
+                if (!update.Success)
+                {
+                    AppLogger.Warning("检查更新未完成：" + update.ErrorMessage);
+                    SetStatus(update.ErrorMessage, true);
+                    MessageBox.Show(this, update.ErrorMessage, "检查更新",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                if (!update.IsUpdateAvailable)
+                {
+                    var message = "当前版本 v" + UpdateService.CurrentVersionText + " 已是最新版。";
+                    SetStatus(message);
+                    MessageBox.Show(this, message + "\n\n运行方式：" + update.Installation.DisplayName,
+                        "检查更新", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                var latest = UpdateService.FormatVersion(update.LatestVersion);
+                var notes = CompactReleaseNotes(update.ReleaseNotes);
+                var prompt =
+                    "发现新版本 v" + latest + "。\n\n" +
+                    "当前版本：v" + UpdateService.CurrentVersionText + "\n" +
+                    "运行方式：" + update.Installation.DisplayName + "\n" +
+                    (string.IsNullOrWhiteSpace(notes) ? "" : "\n更新说明：\n" + notes + "\n") +
+                    "\n是否立即下载并更新？程序会在安装前退出，完成后自动重新启动。";
+                if (MessageBox.Show(this, prompt, "发现新版本",
+                        MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes)
+                {
+                    SetStatus("发现新版本 v" + latest + "，已暂缓更新。");
+                    return;
+                }
+
+                SetStatus("正在下载并校验 v" + latest + " 更新包…");
+                var download = await UpdateService.DownloadUpdateAsync(
+                    update, System.Threading.CancellationToken.None);
+                if (!download.Success)
+                {
+                    SetStatus(download.ErrorMessage, true);
+                    MessageBox.Show(this, download.ErrorMessage, "更新失败",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+
+                SetStatus("更新包已校验，正在启动更新程序…");
+                if (!UpdateService.StartUpdateHelper(update.Installation, download.PackagePath, out var error))
+                {
+                    SetStatus(error, true);
+                    MessageBox.Show(this, error, "更新失败",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+
+                _tray.Visible = false;
+                Application.Exit();
+            }
+            finally
+            {
+                _checkingForUpdate = false;
+                if (!IsDisposed)
+                {
+                    _btnUpdate.Enabled = !_busy;
+                    if (_trayUpdate != null) _trayUpdate.Enabled = !_busy;
+                }
+            }
+        }
+
+        private static string CompactReleaseNotes(string notes)
+        {
+            if (string.IsNullOrWhiteSpace(notes)) return "";
+            var normalized = notes.Replace("\r\n", "\n").Trim();
+            const int maxLength = 700;
+            return normalized.Length <= maxLength
+                ? normalized
+                : normalized.Substring(0, maxLength).TrimEnd() + "…";
+        }
+
         private void OpenLogFolder()
         {
             try
@@ -1161,6 +1261,8 @@ namespace NetSwitcher
             _cardWifi.Combo.Enabled = !busy;
             _chkHard.Enabled = !busy;
             _btnRefresh.Enabled = !busy;
+            _btnUpdate.Enabled = !busy && !_checkingForUpdate;
+            if (_trayUpdate != null) _trayUpdate.Enabled = !busy && !_checkingForUpdate;
             _btnRestoreDefaults.Enabled = !busy;
             UpdateTrayMenu();
             Cursor = busy ? Cursors.WaitCursor : Cursors.Default;
@@ -1396,6 +1498,7 @@ namespace NetSwitcher
             ReplaceFont(_chkHard, 9f);
             ReplaceFont(_chkRestore, 9f);
             ReplaceFont(_statusLabel, 9f);
+            ReplaceFont(_btnUpdate, 8f);
             ReplaceFont(_btnDetails, 8f);
             ReplaceFont(_btnDiagnostics, 8f);
             ReplaceFont(_btnRestoreDefaults, 8f);

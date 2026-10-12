@@ -10,8 +10,15 @@ namespace NetSwitcher
         private static Mutex _singleInstance;
 
         [STAThread]
-        private static void Main()
+        private static void Main(string[] args)
         {
+            if (UpdateInstaller.IsUpdateCommand(args))
+            {
+                ApplicationConfiguration.Initialize();
+                UpdateInstaller.Run(args);
+                return;
+            }
+
             _singleInstance = new Mutex(true, @"Local\NetSwitcher_6D374D73", out var isFirstInstance);
             if (!isFirstInstance)
             {

@@ -11,8 +11,10 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <AssemblyName>NetSwitcher</AssemblyName>
     <RootNamespace>NetSwitcher</RootNamespace>
-    <Version>1.0.0</Version>
-    <FileVersion>1.0.0</FileVersion>
+    <Version>1.1.0</Version>
+    <FileVersion>1.1.0</FileVersion>
+    <InformationalVersion>1.1.0</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Product>网络一键切换器</Product>
     <Company>Local Tools</Company>
     <Description>一键在有线以太网与无线 WiFi 之间切换上网出口</Description>

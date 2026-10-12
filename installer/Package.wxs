@@ -29,13 +29,14 @@
             Message="需要安装 .NET 8 Desktop Runtime (x64)。请从 https://dotnet.microsoft.com/download/dotnet/8.0 下载并安装后重试。" />
 
     <Property Id="ARPCONTACT" Value="Local Tools" />
-    <Property Id="ARPURLINFOABOUT" Value="https://dotnet.microsoft.com/" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/huyinghuan/net-switch" />
+    <Property Id="ARPURLUPDATEINFO" Value="https://github.com/huyinghuan/net-switch/releases" />
     <Property Id="ARPNOMODIFY" Value="1" />
     <Property Id="ARPNOREPAIR" Value="1" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="NetSwitcher">
-        <Component Id="MainExecutable" Guid="*">
+        <Component Id="MainExecutable" Guid="*" Bitness="always64">
           <File Id="NetSwitcherExe"
                 Source="!(bindpath.publish)\NetSwitcher.exe"
                 KeyPath="yes">
@@ -46,6 +47,16 @@
                       WorkingDirectory="INSTALLFOLDER"
                       Advertise="yes" />
           </File>
+          <RegistryValue Root="HKLM"
+                         Key="Software\NetSwitcher"
+                         Name="InstallMode"
+                         Type="string"
+                         Value="MSI" />
+          <RegistryValue Root="HKLM"
+                         Key="Software\NetSwitcher"
+                         Name="InstallPath"
+                         Type="string"
+                         Value="[INSTALLFOLDER]NetSwitcher.exe" />
         </Component>
       </Directory>
     </StandardDirectory>
