@@ -537,7 +537,8 @@ namespace NetSwitcher
                 ForeColor = C_Text,
                 Font = F(10f),
                 ShowImageMargin = false,
-                ShowCheckMargin = true,
+                // 勾选区由自定义渲染器在行内绘制，避免系统默认边距越出高亮区域。
+                ShowCheckMargin = false,
                 DropShadowEnabled = true,
                 MinimumSize = new Size(S(330), 0),
                 Padding = new Padding(S(5)),
@@ -1685,19 +1686,73 @@ namespace NetSwitcher
         {
             private static readonly Color NormalText = ColorTranslator.FromHtml("#F3F6FA");
             private static readonly Color DisabledText = ColorTranslator.FromHtml("#8490A5");
+            private static readonly Color Background = ColorTranslator.FromHtml("#202838");
+            private static readonly Color Selection = ColorTranslator.FromHtml("#355274");
+            private static readonly Color SelectionBorder = ColorTranslator.FromHtml("#6EB7FF");
+            private static readonly Color Separator = ColorTranslator.FromHtml("#354154");
 
             public TrayMenuRenderer() : base(new TrayMenuColorTable())
             {
                 RoundedEdges = false;
             }
 
+            protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+            {
+                var bounds = new Rectangle(Point.Empty, e.Item.Size);
+                using (var background = new SolidBrush(e.Item.Selected ? Selection : Background))
+                    e.Graphics.FillRectangle(background, bounds);
+
+                if (e.Item.Selected && bounds.Width > 2 && bounds.Height > 2)
+                {
+                    using var border = new Pen(SelectionBorder, 1f);
+                    e.Graphics.DrawRectangle(border, 0, 0, bounds.Width - 1, bounds.Height - 1);
+                }
+
+                if (e.Item is ToolStripMenuItem menuItem && menuItem.Checked)
+                    DrawCheckedMark(e.Graphics, menuItem);
+            }
+
             protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
             {
-                if (e.Item is ToolStripLabel)
-                    e.TextColor = e.Item.ForeColor;
-                else
-                    e.TextColor = e.Item.Enabled ? NormalText : DisabledText;
-                base.OnRenderItemText(e);
+                var isLabel = e.Item is ToolStripLabel;
+                var color = isLabel
+                    ? e.Item.ForeColor
+                    : e.Item.Enabled ? NormalText : DisabledText;
+                var scale = ItemScale(e.Item);
+                var left = isLabel ? e.Item.Padding.Left : (int)Math.Round(24f * scale);
+                var right = isLabel ? e.Item.Padding.Right : (int)Math.Round(10f * scale);
+                var textBounds = new Rectangle(
+                    left,
+                    0,
+                    Math.Max(1, e.Item.Width - left - right),
+                    e.Item.Height);
+
+                TextRenderer.DrawText(
+                    e.Graphics,
+                    e.Text,
+                    e.TextFont,
+                    textBounds,
+                    color,
+                    TextFormatFlags.Left |
+                    TextFormatFlags.VerticalCenter |
+                    TextFormatFlags.SingleLine |
+                    TextFormatFlags.EndEllipsis |
+                    TextFormatFlags.NoPadding |
+                    TextFormatFlags.NoPrefix);
+            }
+
+            protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e)
+            {
+                // 禁止默认渲染器创建独立的蓝色勾选块；勾选标记已在菜单行背景中绘制。
+            }
+
+            protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
+            {
+                var scale = Math.Max(1f, e.Item.Height / 16f);
+                var inset = (int)Math.Round(10f * scale);
+                var y = e.Item.Height / 2;
+                using var pen = new Pen(Separator, 1f);
+                e.Graphics.DrawLine(pen, inset, y, Math.Max(inset, e.Item.Width - inset), y);
             }
 
             protected override void OnRenderArrow(ToolStripArrowRenderEventArgs e)
@@ -1705,6 +1760,29 @@ namespace NetSwitcher
                 e.ArrowColor = e.Item.Enabled ? NormalText : DisabledText;
                 base.OnRenderArrow(e);
             }
+
+            private static void DrawCheckedMark(Graphics graphics, ToolStripMenuItem item)
+            {
+                var scale = ItemScale(item);
+                var centerY = item.Height / 2f;
+                var points = new[]
+                {
+                    new PointF(5f * scale, centerY),
+                    new PointF(9f * scale, centerY + 4f * scale),
+                    new PointF(17f * scale, centerY - 5f * scale)
+                };
+                using var pen = new Pen(NormalText, Math.Max(1.8f, 2.1f * scale))
+                {
+                    StartCap = LineCap.Round,
+                    EndCap = LineCap.Round,
+                    LineJoin = LineJoin.Round
+                };
+                graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                graphics.DrawLines(pen, points);
+            }
+
+            private static float ItemScale(ToolStripItem item) =>
+                Math.Max(1f, item.Height / 40f);
         }
 
         private sealed class TrayMenuColorTable : ProfessionalColorTable
