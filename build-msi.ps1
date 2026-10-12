@@ -12,6 +12,7 @@ $appProject = Join-Path $projectRoot "NetSwitcher.csproj"
 $installerProject = Join-Path $projectRoot "installer\NetSwitcher.Installer.wixproj"
 $publishDir = Join-Path $projectRoot "artifacts\publish\framework-dependent"
 $outputDir = Join-Path $projectRoot "artifacts"
+$portableDir = Join-Path $outputDir "portable"
 
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
     throw "未找到 .NET SDK。请先安装 .NET 8 或更高版本的 SDK。"
@@ -38,7 +39,7 @@ New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 Get-ChildItem -LiteralPath $outputDir -Filter "NetSwitcher-Setup-*-x64.msi" -File |
     Remove-Item -Force
 
-Write-Host "[1/2] 发布框架依赖单文件应用..." -ForegroundColor Cyan
+Write-Host "[1/3] 发布 MSI 使用的框架依赖应用..." -ForegroundColor Cyan
 & dotnet publish $appProject `
     -c $Configuration `
     -r win-x64 `
@@ -52,7 +53,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "应用发布失败，退出代码：$LASTEXITCODE"
 }
 
-Write-Host "[2/2] 构建 MSI 安装包..." -ForegroundColor Cyan
+Write-Host "[2/3] 构建 MSI 安装包..." -ForegroundColor Cyan
 & dotnet build $installerProject `
     -c $Configuration `
     "-p:ProductVersion=$Version" `
@@ -73,7 +74,30 @@ if ((Test-Path -LiteralPath $publishRoot) -and
     -not (Get-ChildItem -LiteralPath $publishRoot -Force | Select-Object -First 1)) {
     Remove-Item -LiteralPath $publishRoot -Force
 }
+
+if (Test-Path -LiteralPath $portableDir) {
+    Remove-Item -LiteralPath $portableDir -Recurse -Force
+}
+Write-Host "[3/3] 发布无需安装 .NET 的独立 EXE..." -ForegroundColor Cyan
+& dotnet publish $appProject `
+    -c $Configuration `
+    -p:PublishProfile=SingleFile `
+    -o $portableDir
+if ($LASTEXITCODE -ne 0) {
+    throw "独立 EXE 发布失败，退出代码：$LASTEXITCODE"
+}
+
+$portableExe = Join-Path $portableDir "NetSwitcher.exe"
+if (-not (Test-Path -LiteralPath $portableExe -PathType Leaf)) {
+    throw "发布完成但未找到独立 EXE：$portableExe"
+}
+$exeSizeMb = [Math]::Round((Get-Item -LiteralPath $portableExe).Length / 1MB, 2)
+
 Write-Host ""
-Write-Host "构建成功：$msiPath" -ForegroundColor Green
-Write-Host "文件大小：$sizeMb MB"
+Write-Host "MSI 构建成功：$msiPath" -ForegroundColor Green
+Write-Host "MSI 文件大小：$sizeMb MB"
 Write-Host "此 MSI 需要目标电脑预先安装 .NET 8 Desktop Runtime (x64)。"
+Write-Host ""
+Write-Host "独立 EXE 构建成功：$portableExe" -ForegroundColor Green
+Write-Host "EXE 文件大小：$exeSizeMb MB"
+Write-Host "此 EXE 已包含 .NET 运行时，可直接分发。"
