@@ -123,7 +123,7 @@ artifacts\NetSwitcher-Setup-版本号-x64.msi
 artifacts\portable\NetSwitcher.exe
 ```
 
-发布新版本前，请修改 `NetSwitcher.csproj` 中的 `Version`。程序使用这个版本号判断是否存在更新。
+发布新版本前，请修改 `NetSwitcher.csproj` 中的 `Version`。程序使用这个版本号判断是否存在更新。普通功能和问题修复递增补丁版本（每次增加 `0.0.1`）；只有较大的功能变更才递增次版本（增加 `0.1`）。
 
 也可以在 PowerShell 中运行：
 
@@ -134,7 +134,7 @@ artifacts\portable\NetSwitcher.exe
 或者指定版本号：
 
 ```powershell
-.\build-msi.ps1 -Version 1.1.0
+.\build-msi.ps1 -Version 1.1.1
 ```
 
 ## GitHub Actions 自动发布
@@ -146,19 +146,19 @@ artifacts\portable\NetSwitcher.exe
 
 发布前，需要先把 `NetSwitcher.csproj` 中的 `Version` 改为新版本，并提交代码。Git 标签中的版本号必须与项目版本完全一致。
 
-例如发布 `1.1.0`：
+例如发布 `1.1.1`：
 
 ```powershell
-git tag v1.1.0
+git tag v1.1.1
 git push origin main
-git push origin v1.1.0
+git push origin v1.1.1
 ```
 
 Release 会包含：
 
 ```text
-NetSwitcher-Setup-1.1.0-x64.msi
-NetSwitcher-Portable-1.1.0-x64.exe
+NetSwitcher-Setup-1.1.1-x64.msi
+NetSwitcher-Portable-1.1.1-x64.exe
 SHA256SUMS.txt
 ```
 
