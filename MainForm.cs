@@ -575,9 +575,9 @@ namespace NetSwitcher
             {
                 ForeColor = color,
                 Font = F(title ? 10.5f : 8.5f, title ? FontStyle.Bold : FontStyle.Regular),
-                Padding = title
-                    ? new Padding(S(11), S(7), S(11), S(2))
-                    : new Padding(S(11), S(2), S(11), S(5)),
+                AutoSize = false,
+                Size = new Size(S(310), S(title ? 40 : 30)),
+                Padding = new Padding(S(11), 0, S(11), 0),
                 TextAlign = ContentAlignment.MiddleLeft
             };
         }
@@ -592,8 +592,11 @@ namespace NetSwitcher
         private void StyleTrayAction(ToolStripMenuItem item)
         {
             item.ForeColor = C_Text;
-            item.Padding = new Padding(S(10), S(6), S(12), S(6));
+            item.AutoSize = false;
+            item.Size = new Size(S(310), S(40));
+            item.Padding = new Padding(S(10), 0, S(12), 0);
             item.Margin = new Padding(S(2), S(1), S(2), S(1));
+            item.TextAlign = ContentAlignment.MiddleLeft;
         }
 
         private ToolStripSeparator MakeTraySeparator()
