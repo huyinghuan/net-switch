@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
-     xmlns:netfx="http://wixtoolset.org/schemas/v4/wxs/netfx">
+     xmlns:netfx="http://wixtoolset.org/schemas/v4/wxs/netfx"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
   <Package Name="网络一键切换器"
            Manufacturer="Local Tools"
            Version="$(var.ProductVersion)"
@@ -19,6 +20,13 @@
                   DowngradeErrorMessage="已安装更新版本的网络一键切换器。" />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
+    <ui:WixUI Id="WixUI_InstallDir"
+              InstallDirectory="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf"
+                 Value="License.rtf" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT"
+              Value="安装已完成。可以从开始菜单启动网络一键切换器。" />
+
     <netfx:DotNetCompatibilityCheck Id="DotNetDesktopRuntimeCheck"
                                     Property="DOTNETRUNTIMECHECK"
                                     RuntimeType="desktop"
@@ -31,7 +39,6 @@
     <Property Id="ARPCONTACT" Value="Local Tools" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/huyinghuan/net-switch" />
     <Property Id="ARPURLUPDATEINFO" Value="https://github.com/huyinghuan/net-switch/releases" />
-    <Property Id="ARPNOMODIFY" Value="1" />
     <Property Id="ARPNOREPAIR" Value="1" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
@@ -48,6 +55,12 @@
                       WorkingDirectory="INSTALLFOLDER"
                       Advertise="yes" />
           </File>
+          <File Id="LicenseDocument"
+                Source="..\LICENSE.md"
+                Name="LICENSE.md" />
+          <File Id="DisclaimerDocument"
+                Source="..\DISCLAIMER.md"
+                Name="DISCLAIMER.md" />
           <RegistryValue Root="HKLM"
                          Key="Software\NetSwitcher"
                          Name="InstallMode"

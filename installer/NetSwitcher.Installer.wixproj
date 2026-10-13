@@ -9,12 +9,14 @@
     <DefineConstants>ProductVersion=$(ProductVersion)</DefineConstants>
     <DebugType>none</DebugType>
     <DefaultCompressionLevel>high</DefaultCompressionLevel>
+    <Cultures>zh-CN</Cultures>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <SuppressIces>ICE61</SuppressIces>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="WixToolset.Netfx.wixext" Version="5.0.2" />
+    <PackageReference Include="WixToolset.UI.wixext" Version="5.0.2" />
     <BindPath Include="$(PublishDir)" BindName="publish" />
   </ItemGroup>
 

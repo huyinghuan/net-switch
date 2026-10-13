@@ -12,9 +12,9 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <AssemblyName>NetSwitcher</AssemblyName>
     <RootNamespace>NetSwitcher</RootNamespace>
-    <Version>1.2.0</Version>
-    <FileVersion>1.2.0</FileVersion>
-    <InformationalVersion>1.2.0</InformationalVersion>
+    <Version>1.2.1</Version>
+    <FileVersion>1.2.1</FileVersion>
+    <InformationalVersion>1.2.1</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Product>网络一键切换器</Product>
     <Company>Local Tools</Company>

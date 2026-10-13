@@ -41,6 +41,9 @@ NetSwitcher 是一款面向 Windows 的轻量网络工具，用于在有线以�
 - 创建开始菜单快捷方式。
 - 支持从 Windows“已安装的应用”中卸载。
 - 支持覆盖安装和版本升级。
+- 安装向导允许用户修改安装目录。
+- 安装前必须阅读并接受个人及内部使用许可协议和免责声明。
+- 安装完成后会显示明确的完成提示。
 - 安装包体积较小。
 - 目标电脑需要安装 [.NET 8 Desktop Runtime x64](https://dotnet.microsoft.com/download/dotnet/8.0)。安装程序会检测运行时，缺失时给出提示。
 
@@ -146,7 +149,7 @@ artifacts\portable\NetSwitcher.exe
 或者指定版本号：
 
 ```powershell
-.\build-msi.ps1 -Version 1.2.0
+.\build-msi.ps1 -Version 1.2.1
 ```
 
 ## GitHub Actions 自动发布
@@ -158,23 +161,26 @@ artifacts\portable\NetSwitcher.exe
 
 发布前，需要先把 `NetSwitcher.csproj` 中的 `Version` 改为新版本，并提交代码。Git 标签中的版本号必须与项目版本完全一致。
 
-例如发布 `1.2.0`：
+例如发布 `1.2.1`：
 
 ```powershell
-git tag v1.2.0
+git tag v1.2.1
 git push origin main
-git push origin v1.2.0
+git push origin v1.2.1
 ```
 
 Release 会包含：
 
 ```text
-NetSwitcher-Setup-1.2.0-x64.msi
-NetSwitcher-Portable-1.2.0-x64.exe
+NetSwitcher-Setup-1.2.1-x64.msi
+NetSwitcher-Portable-1.2.1-x64.exe
 SHA256SUMS.txt
 ```
 
 ## 注意事项
+
+- 本项目使用限制商业化的自定义许可，并非 OSI 认可的开源许可证。允许个人使用、本人工作使用和单位内部免费自用；禁止销售、收费服务、商业集成和商业化再分发。详见 `LICENSE.md`。
+- 安装或使用软件前请阅读 `DISCLAIMER.md`。修改网络配置可能造成连接中断，请仅操作自己有权管理的设备和网络。
 
 - 切换网络时，正在进行的下载、远程连接或视频会议可能短暂中断。
 - 部分公司网络、VPN 或安全软件可能限制网络配置修改或公网检测。
