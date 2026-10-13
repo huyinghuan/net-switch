@@ -54,11 +54,13 @@ namespace NetSwitcher
         private List<AdapterInfo> _adapters = new List<AdapterInfo>();
 
         // 界面元素
-        private Panel _header, _summary, _cardsHost, _options, _statusBar;
+        private Panel _header, _tabBar, _exitPage, _summary, _cardsHost, _options, _statusBar;
         private LoadingOverlay _loadingOverlay;
+        private IpProfilesView _profilesView;
         private Panel _cardLeft, _cardRight;
         private Label _lblTitle, _lblVer, _sumTip, _sumTitle, _sumSub, _statusLabel;
-        private Button _btnClose, _btnMin, _btnRefresh, _btnUpdate, _btnDetails, _btnDiagnostics, _btnRestoreDefaults;
+        private Button _btnClose, _btnMin, _btnRefresh, _btnExitTab, _btnProfilesTab;
+        private Button _btnUpdate, _btnDetails, _btnDiagnostics, _btnRestoreDefaults;
         private CheckBox _chkHard, _chkRestore;
 
         private readonly AdapterCard _cardWired = new AdapterCard();
@@ -70,7 +72,10 @@ namespace NetSwitcher
         private System.Windows.Forms.Timer _timer;
         private System.Windows.Forms.Timer _networkDebounceTimer;
         private ToolStripLabel _trayStatus;
-        private ToolStripMenuItem _trayWired, _trayWifi, _trayUpdate;
+        private ToolStripMenuItem _trayWired, _trayWifi, _trayUpdate, _trayManageProfiles;
+        private ToolStripLabel _trayProfilesGroup;
+        private ToolStripSeparator _trayProfilesSeparator;
+        private readonly List<ToolStripMenuItem> _trayProfileItems = new List<ToolStripMenuItem>();
         private bool _loading = true;
         private bool _syncing;
         private bool _busy;
@@ -119,8 +124,8 @@ namespace NetSwitcher
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.None;
             AutoScaleMode = AutoScaleMode.None;
-            ClientSize = new Size(S(760), S(560));
-            MinimumSize = new Size(S(640), S(480));
+            ClientSize = new Size(S(860), S(640));
+            MinimumSize = new Size(S(720), S(540));
             DoubleBuffered = true;
             ResizeRedraw = true;
             BackColor = C_Bg;
@@ -131,6 +136,8 @@ namespace NetSwitcher
             MaximizeBox = false;
 
             _header = BuildHeader();
+            _tabBar = BuildTabBar();
+            _exitPage = new Panel { BackColor = C_Bg };
             _summary = BuildSummaryArea();
             _cardsHost = new Panel { BackColor = C_Bg };
             _cardLeft = BuildCard("有线以太网", _cardWired, C_Wired, "切换到有线");
@@ -139,16 +146,27 @@ namespace NetSwitcher
             _cardsHost.Controls.Add(_cardRight);
             _options = BuildOptionsArea();
             _statusBar = BuildStatusArea();
+            _profilesView = new IpProfilesView(_cfg, () => _adapters);
+            _profilesView.ApplyRequested += (s, e) => FireAndTrack(ApplyIpProfile(e.Profile));
+            _profilesView.RestoreDhcpRequested += (s, e) => FireAndTrack(RestoreProfileAdapterDhcp(e.Profile));
+            _profilesView.ProfilesChanged += (s, e) =>
+            {
+                RebuildTrayProfiles();
+                UpdateTrayMenu();
+            };
             _loadingOverlay = new LoadingOverlay
             {
                 Visible = false,
                 Font = F(10f, FontStyle.Bold)
             };
 
-            Controls.Add(_cardsHost);
-            Controls.Add(_options);
+            _exitPage.Controls.Add(_cardsHost);
+            _exitPage.Controls.Add(_options);
+            _exitPage.Controls.Add(_summary);
+            Controls.Add(_exitPage);
+            Controls.Add(_profilesView);
             Controls.Add(_statusBar);
-            Controls.Add(_summary);
+            Controls.Add(_tabBar);
             Controls.Add(_header);
             Controls.Add(_loadingOverlay);
 
@@ -157,7 +175,69 @@ namespace NetSwitcher
             _cardWired.Combo.SelectedIndexChanged += (s, e) => OnComboChanged();
             _cardWifi.Combo.SelectedIndexChanged += (s, e) => OnComboChanged();
 
+            ShowExitPage();
             LayoutChrome();
+        }
+
+        private Panel BuildTabBar()
+        {
+            var panel = new Panel { BackColor = C_Header };
+            panel.Paint += (s, e) =>
+            {
+                using var pen = new Pen(C_Border, 1f);
+                e.Graphics.DrawLine(pen, 0, panel.Height - 1, panel.Width, panel.Height - 1);
+            };
+
+            _btnExitTab = MakeTabButton("出口切换");
+            _btnProfilesTab = MakeTabButton("IP 配置");
+            _btnExitTab.Click += (s, e) => ShowExitPage();
+            _btnProfilesTab.Click += (s, e) => ShowProfilesPage();
+            panel.Controls.Add(_btnExitTab);
+            panel.Controls.Add(_btnProfilesTab);
+            return panel;
+        }
+
+        private Button MakeTabButton(string text)
+        {
+            var button = new Button
+            {
+                Text = text,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = C_Header,
+                ForeColor = C_Muted,
+                Font = F(9.5f, FontStyle.Bold),
+                Cursor = Cursors.Hand,
+                TabStop = false
+            };
+            button.FlatAppearance.BorderSize = 0;
+            button.FlatAppearance.MouseOverBackColor = ColorTranslator.FromHtml("#252D3B");
+            return button;
+        }
+
+        private void ShowExitPage()
+        {
+            if (_exitPage == null) return;
+            _exitPage.Visible = true;
+            _profilesView.Visible = false;
+            StyleActiveTab(_btnExitTab, true);
+            StyleActiveTab(_btnProfilesTab, false);
+        }
+
+        private void ShowProfilesPage()
+        {
+            if (_profilesView == null) return;
+            _exitPage.Visible = false;
+            _profilesView.Visible = true;
+            _profilesView.RefreshCurrentState();
+            StyleActiveTab(_btnExitTab, false);
+            StyleActiveTab(_btnProfilesTab, true);
+        }
+
+        private static void StyleActiveTab(Button button, bool active)
+        {
+            if (button == null) return;
+            button.BackColor = active ? C_Bg : C_Header;
+            button.ForeColor = active ? C_Wired : C_Muted;
         }
 
         private Panel BuildHeader()
@@ -434,22 +514,26 @@ namespace NetSwitcher
             int h = ClientSize.Height;
 
             int headerH = S(50);
+            int tabsH = S(44);
             int summaryH = S(86);
             int statusH = S(32);
             int optionsH = S(68);
 
             _header.Bounds = new Rectangle(0, 0, w, headerH);
-            _summary.Bounds = new Rectangle(0, headerH, w, summaryH);
+            _tabBar.Bounds = new Rectangle(0, headerH, w, tabsH);
+            _exitPage.Bounds = new Rectangle(0, headerH + tabsH, w, Math.Max(S(200), h - headerH - tabsH - statusH));
+            _profilesView.Bounds = _exitPage.Bounds;
+            _summary.Bounds = new Rectangle(0, 0, w, summaryH);
 
-            int hostTop = headerH + summaryH;
-            _options.Bounds = new Rectangle(0, h - statusH - optionsH, w, optionsH);
+            int hostTop = summaryH;
+            _options.Bounds = new Rectangle(0, _exitPage.Height - optionsH, w, optionsH);
             _statusBar.Bounds = new Rectangle(0, h - statusH, w, statusH);
 
             _cardsHost.Bounds = new Rectangle(
                 S(16),
                 hostTop + S(4),
                 Math.Max(S(200), w - 2 * S(16)),
-                Math.Max(S(220), h - hostTop - S(4) - optionsH - statusH - S(6)));
+                Math.Max(S(220), _exitPage.Height - hostTop - S(4) - optionsH - S(6)));
 
             int gap = S(12);
             int cw = (_cardsHost.Width - gap) / 2;
@@ -463,6 +547,9 @@ namespace NetSwitcher
             _btnClose.Location = new Point(w - S(48), S(10));
             _btnMin.Location = new Point(w - S(82), S(10));
             _btnRefresh.Location = new Point(w - S(116), S(10));
+
+            _btnExitTab.Bounds = new Rectangle(S(16), S(5), S(112), S(38));
+            _btnProfilesTab.Bounds = new Rectangle(S(132), S(5), S(112), S(38));
 
             _sumTip.Location = new Point(S(20), S(6));
             _sumTitle.Location = new Point(S(20), S(24));
@@ -480,6 +567,7 @@ namespace NetSwitcher
             _statusLabel.Bounds = new Rectangle(S(20), 0, Math.Max(S(100), _btnUpdate.Left - S(28)), statusH);
             _loadingOverlay.Bounds = ClientRectangle;
             if (_loadingOverlay.Visible) _loadingOverlay.BringToFront();
+            _profilesView.ApplyScale(_dpiScale);
 
             LayoutCard(_cardLeft, _cardWired);
             LayoutCard(_cardRight, _cardWifi);
@@ -548,6 +636,7 @@ namespace NetSwitcher
             var title = MakeTrayLabel("网络一键切换器", true, C_Text);
             _trayStatus = MakeTrayLabel("正在读取网络状态…", false, C_Warn);
             var switchGroup = MakeTrayLabel("快速切换", false, ColorTranslator.FromHtml("#AEB8CA"));
+            _trayProfilesGroup = MakeTrayLabel("IP 配置", false, ColorTranslator.FromHtml("#AEB8CA"));
             var toolsGroup = MakeTrayLabel("工具与设置", false, ColorTranslator.FromHtml("#AEB8CA"));
 
             _trayWired = new ToolStripMenuItem("切换到有线以太网", null,
@@ -569,6 +658,15 @@ namespace NetSwitcher
                 FireAndTrack(RestoreWindowsDefaults());
             }));
             _trayMenu.Items.Add(MakeTraySeparator());
+            _trayMenu.Items.Add(_trayProfilesGroup);
+            _trayManageProfiles = MakeTrayAction("管理 IP 配置…", (s, e) =>
+            {
+                ShowWindow(false);
+                ShowProfilesPage();
+            });
+            _trayMenu.Items.Add(_trayManageProfiles);
+            _trayProfilesSeparator = MakeTraySeparator();
+            _trayMenu.Items.Add(_trayProfilesSeparator);
             _trayMenu.Items.Add(toolsGroup);
             _trayMenu.Items.Add(MakeTrayAction("查看最近操作详情", (s, e) => ShowOperationDetails()));
             _trayMenu.Items.Add(MakeTrayAction("复制诊断信息", (s, e) => CopyDiagnostics()));
@@ -591,6 +689,41 @@ namespace NetSwitcher
             _tray.ContextMenuStrip = _trayMenu;
             _tray.DoubleClick += (s, e) => ShowWindow();
             _tray.BalloonTipClicked += (s, e) => ShowWindow();
+            RebuildTrayProfiles();
+        }
+
+        private void RebuildTrayProfiles()
+        {
+            if (_trayMenu == null || _trayManageProfiles == null) return;
+            foreach (var item in _trayProfileItems)
+            {
+                _trayMenu.Items.Remove(item);
+                item.Dispose();
+            }
+            _trayProfileItems.Clear();
+
+            var insertAt = _trayMenu.Items.IndexOf(_trayManageProfiles);
+            foreach (var profile in (_cfg.IpProfiles ?? new List<IpProfile>())
+                         .Where(item => item.ShowInTray)
+                         .Take(6))
+            {
+                var profileId = profile.Id;
+                var item = MakeTrayAction(profile.Name, (s, e) =>
+                {
+                    var current = _cfg.IpProfiles.FirstOrDefault(candidate => candidate.Id == profileId);
+                    if (current == null) return;
+                    ShowWindow(false);
+                    ShowProfilesPage();
+                    _profilesView.ReloadProfiles(current.Id);
+                    FireAndTrack(ApplyIpProfile(current));
+                });
+                item.Tag = profile.Id;
+                _trayProfileItems.Add(item);
+                _trayMenu.Items.Insert(insertAt++, item);
+            }
+
+            _trayProfilesGroup.Visible = _trayProfileItems.Count > 0;
+            _trayManageProfiles.Text = _trayProfileItems.Count > 0 ? "管理 IP 配置…" : "新增 IP 配置…";
         }
 
         private ToolStripLabel MakeTrayLabel(string text, bool title, Color color)
@@ -766,6 +899,7 @@ namespace NetSwitcher
             UpdateCard(_cardWired, SelectedAdapter(_cardWired.Combo), dt, C_Wired);
             UpdateCard(_cardWifi, SelectedAdapter(_cardWifi.Combo), dt, C_Wifi);
             UpdateSummary();
+            _profilesView?.RefreshCurrentState();
             UpdateTrayMenu();
 
             _lastBytes.Clear();
@@ -875,12 +1009,175 @@ namespace NetSwitcher
             _trayWifi.Text = "切换到 Wi-Fi" + (wifi == null ? "（未检测到）" : " · " + wifi.Name);
             _trayWired.Enabled = wired != null && !_busy;
             _trayWifi.Enabled = wifi != null && !_busy;
+            foreach (var item in _trayProfileItems)
+            {
+                var profileId = item.Tag as string;
+                var profile = _cfg.IpProfiles.FirstOrDefault(candidate => candidate.Id == profileId);
+                var adapter = profile == null
+                    ? null
+                    : NetworkService.FindByIdentity(_adapters, profile.AdapterId, profile.AdapterName);
+                item.Checked = profile != null && _cfg.LastAppliedIpProfileId == profile.Id &&
+                               NetworkService.IpProfileMatchesAdapter(profile, adapter);
+                item.Enabled = profile != null && adapter != null && !_busy;
+            }
+            if (_trayManageProfiles != null) _trayManageProfiles.Enabled = !_busy;
             _tray.Text = currentText.Length <= 63 ? currentText : currentText.Substring(0, 63);
         }
 
         #endregion
 
         #region 切换
+
+        private async Task ApplyIpProfile(IpProfile profile)
+        {
+            if (_busy || _refreshing || profile == null) return;
+            var target = NetworkService.FindByIdentity(_adapters, profile.AdapterId, profile.AdapterName);
+            if (target == null)
+            {
+                SetStatus("找不到配置绑定的网卡，请编辑配置并重新选择网卡。", true);
+                MessageBox.Show(this,
+                    "找不到 IP 配置「" + profile.Name + "」绑定的网卡「" + profile.AdapterName + "」。\n\n请编辑配置并重新选择网卡。",
+                    "目标网卡不存在", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var previous = LastAppliedProfileFor(target);
+
+            _busy = true;
+            SetBusyUi(true);
+            var initialMessage = "正在准备应用 IP 配置「" + profile.Name + "」…";
+            SetStatus(initialMessage);
+            ShowLoading(initialMessage);
+            try
+            {
+                var progress = new Progress<string>(message =>
+                {
+                    SetStatus(message);
+                    ShowLoading(message);
+                });
+                try
+                {
+                    _lastOperation = await NetworkService.ApplyIpProfileWithRollbackAsync(
+                        profile, target, previous, progress);
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Error("应用固定 IP 配置时发生异常。", ex);
+                    _lastOperation = new SwitchResult
+                    {
+                        Success = false,
+                        Message = "应用固定 IP 配置失败：" + ex.Message
+                    };
+                }
+
+                _btnDetails.Enabled = true;
+                if (_lastOperation.Success)
+                {
+                    _cfg.LastAppliedIpProfileId = profile.Id;
+                    _cfg.LastAppliedIpProfile = profile.Clone();
+                    _cfg.Save();
+                }
+
+                await RefreshAdaptersAsync(false);
+                _profilesView.ReloadProfiles(profile.Id);
+                SetStatus(_lastOperation.Message, !_lastOperation.Success);
+                _tray.BalloonTipTitle = _lastOperation.Success ? "IP 配置已应用" : "IP 配置未完成";
+                _tray.BalloonTipText = _lastOperation.Message;
+                _tray.ShowBalloonTip(3000);
+                if (!_lastOperation.Success) ShowOperationDetails();
+            }
+            finally
+            {
+                HideLoading();
+                _busy = false;
+                SetBusyUi(false);
+            }
+        }
+
+        private async Task RestoreProfileAdapterDhcp(IpProfile selectedProfile)
+        {
+            if (_busy || _refreshing || selectedProfile == null) return;
+            var target = NetworkService.FindByIdentity(_adapters, selectedProfile.AdapterId, selectedProfile.AdapterName);
+            if (target == null)
+            {
+                SetStatus("找不到要恢复为自动获取的网卡。", true);
+                MessageBox.Show(this, "找不到网卡「" + selectedProfile.AdapterName + "」，请刷新后重试。",
+                    "目标网卡不存在", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (MessageBox.Show(this,
+                    "确定将网卡「" + target.Name + "」恢复为自动获取 IP 和 DNS 吗？\n\n" +
+                    "这不会修改该网卡的出口跃点数。",
+                    "恢复自动获取", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+
+            var previous = LastAppliedProfileFor(target) ?? selectedProfile;
+            _busy = true;
+            SetBusyUi(true);
+            var initialMessage = "正在将「" + target.Name + "」恢复为自动获取…";
+            SetStatus(initialMessage);
+            ShowLoading(initialMessage);
+            try
+            {
+                var progress = new Progress<string>(message =>
+                {
+                    SetStatus(message);
+                    ShowLoading(message);
+                });
+                try
+                {
+                    _lastOperation = await NetworkService.RestoreDhcpWithRollbackAsync(target, previous, progress);
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Error("恢复 DHCP 时发生异常。", ex);
+                    _lastOperation = new SwitchResult
+                    {
+                        Success = false,
+                        Message = "恢复自动获取失败：" + ex.Message
+                    };
+                }
+
+                _btnDetails.Enabled = true;
+                if (_lastOperation.Success && previous != null)
+                {
+                    _cfg.LastAppliedIpProfileId = "";
+                    _cfg.LastAppliedIpProfile = null;
+                    _cfg.Save();
+                }
+                await RefreshAdaptersAsync(false);
+                _profilesView.ReloadProfiles(selectedProfile.Id);
+                SetStatus(_lastOperation.Message, !_lastOperation.Success);
+                _tray.BalloonTipTitle = _lastOperation.Success ? "已恢复自动获取" : "恢复自动获取未完成";
+                _tray.BalloonTipText = _lastOperation.Message;
+                _tray.ShowBalloonTip(3000);
+                if (!_lastOperation.Success) ShowOperationDetails();
+            }
+            finally
+            {
+                HideLoading();
+                _busy = false;
+                SetBusyUi(false);
+            }
+        }
+
+        private IpProfile LastAppliedProfileFor(AdapterInfo adapter)
+        {
+            if (adapter == null) return null;
+            var snapshot = _cfg.LastAppliedIpProfile;
+            if (snapshot != null &&
+                ((!string.IsNullOrWhiteSpace(snapshot.AdapterId) &&
+                  string.Equals(snapshot.AdapterId, adapter.Id, StringComparison.OrdinalIgnoreCase)) ||
+                 (string.IsNullOrWhiteSpace(snapshot.AdapterId) &&
+                  string.Equals(snapshot.AdapterName, adapter.Name, StringComparison.OrdinalIgnoreCase))))
+                return snapshot;
+
+            return _cfg.IpProfiles.FirstOrDefault(item =>
+                item.Id == _cfg.LastAppliedIpProfileId &&
+                ((!string.IsNullOrWhiteSpace(item.AdapterId) &&
+                  string.Equals(item.AdapterId, adapter.Id, StringComparison.OrdinalIgnoreCase)) ||
+                 string.Equals(item.AdapterName, adapter.Name, StringComparison.OrdinalIgnoreCase)));
+        }
 
         private async Task<bool> SwitchTo(bool toWired, bool silent)
         {
@@ -1289,6 +1586,7 @@ namespace NetSwitcher
             _btnUpdate.Enabled = !busy && !_checkingForUpdate;
             if (_trayUpdate != null) _trayUpdate.Enabled = !busy && !_checkingForUpdate;
             _btnRestoreDefaults.Enabled = !busy;
+            _profilesView?.SetBusy(busy);
             UpdateTrayMenu();
             Cursor = busy ? Cursors.WaitCursor : Cursors.Default;
         }
@@ -1324,8 +1622,8 @@ namespace NetSwitcher
             if (Math.Abs(actualScale - _dpiScale) > 0.01f)
             {
                 _dpiScale = actualScale;
-                ClientSize = new Size(S(760), S(560));
-                MinimumSize = new Size(S(640), S(480));
+                ClientSize = new Size(S(860), S(640));
+                MinimumSize = new Size(S(720), S(540));
                 RefreshDpiFonts();
             }
             Bounds = FitToWorkingArea(Bounds);
@@ -1340,7 +1638,7 @@ namespace NetSwitcher
             {
                 _dpiScale = Math.Max(1f, e.DeviceDpiNew / 96f);
                 base.OnDpiChanged(e);
-                MinimumSize = new Size(S(640), S(480));
+                MinimumSize = new Size(S(720), S(540));
                 Bounds = FitToWorkingArea(e.SuggestedRectangle);
                 RefreshDpiFonts();
                 LayoutChrome();
@@ -1529,6 +1827,8 @@ namespace NetSwitcher
             ReplaceFont(_btnClose, 10f);
             ReplaceFont(_btnMin, 10f);
             ReplaceFont(_btnRefresh, 10f);
+            ReplaceFont(_btnExitTab, 9.5f, FontStyle.Bold);
+            ReplaceFont(_btnProfilesTab, 9.5f, FontStyle.Bold);
             ReplaceFont(_sumTip, 9f);
             ReplaceFont(_sumTitle, 15f, FontStyle.Bold);
             ReplaceFont(_sumSub, 9f);
@@ -1540,6 +1840,7 @@ namespace NetSwitcher
             ReplaceFont(_btnDiagnostics, 8f);
             ReplaceFont(_btnRestoreDefaults, 8f);
             ReplaceFont(_loadingOverlay, 10f, FontStyle.Bold);
+            _profilesView?.ApplyScale(_dpiScale);
             RefreshCardFonts(_cardWired);
             RefreshCardFonts(_cardWifi);
         }

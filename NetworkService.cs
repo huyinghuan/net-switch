@@ -74,7 +74,7 @@ namespace NetSwitcher
     /// 网卡枚举 + 一键切换（改跃点数 / 启用禁用网卡）。
     /// 读信息走 .NET 原生 API（零开销），改配置走 PowerShell 的 NetAdapter 模块（官方支持的方式）。
     /// </summary>
-    public static class NetworkService
+    public static partial class NetworkService
     {
         // 自动选择网卡时优先排除的虚拟 / 隧道设备
         private static readonly string[] VirtualKeywords =

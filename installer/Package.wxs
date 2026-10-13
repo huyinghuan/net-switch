@@ -43,7 +43,7 @@
             <Shortcut Id="ApplicationStartMenuShortcut"
                       Directory="ProgramMenuFolder"
                       Name="网络一键切换器"
-                      Description="一键切换有线与 Wi-Fi 上网出口"
+                      Description="切换网络出口并管理常用固定 IP 配置"
                       Icon="NetSwitcher.exe"
                       WorkingDirectory="INSTALLFOLDER"
                       Advertise="yes" />

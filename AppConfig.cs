@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
@@ -18,6 +19,9 @@ namespace NetSwitcher
         public string LastExit { get; set; } = "";          // 上次设为出口的网卡名
         public string LastExitId { get; set; } = "";        // 上次出口的稳定 ID
         public bool RestoreOnStartup { get; set; } = true;  // 启动时恢复上次的出口
+        public List<IpProfile> IpProfiles { get; set; } = new List<IpProfile>();
+        public string LastAppliedIpProfileId { get; set; } = "";
+        public IpProfile LastAppliedIpProfile { get; set; }
 
         private static string ConfigDir =>
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NetSwitcher");
@@ -32,7 +36,11 @@ namespace NetSwitcher
                 {
                     var json = File.ReadAllText(ConfigPath);
                     var cfg = JsonSerializer.Deserialize<AppConfig>(json);
-                    if (cfg != null) return cfg;
+                    if (cfg != null)
+                    {
+                        cfg.IpProfiles ??= new List<IpProfile>();
+                        return cfg;
+                    }
                 }
             }
             catch (Exception ex)

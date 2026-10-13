@@ -1,6 +1,6 @@
 # NetSwitcher（网络一键切换器）
 
-NetSwitcher 是一款面向 Windows 的轻量网络出口切换工具，用于在有线以太网和 Wi-Fi 之间快速切换默认上网出口。
+NetSwitcher 是一款面向 Windows 的轻量网络工具，用于在有线以太网和 Wi-Fi 之间快速切换默认上网出口，并保存、切换工作中常用的固定 IP 配置。
 
 它适合同时连接公司内网、家庭网络、无线热点等多个网络的电脑。程序通过调整 Windows 网卡跃点数来选择优先出口，也可以在需要时禁用备用网卡，避免流量走错网络。
 
@@ -15,6 +15,10 @@ NetSwitcher 是一款面向 Windows 的轻量网络出口切换工具，用于�
 - 新出口不可用时自动恢复切换前的网络配置。
 - 支持恢复 Windows 自动跃点数。
 - 支持启动时恢复上次使用的出口。
+- 支持保存多个固定 IPv4 配置，包括子网掩码、可选网关、DNS 和静态路由。
+- 固定 IP 配置绑定稳定的网卡 ID，可从主界面或托盘菜单快速应用。
+- 应用固定 IP 前保存当前设置，失败时自动回滚，且不会修改出口跃点数。
+- 提供独立的“恢复自动获取（DHCP）”按钮。
 - 最小化到系统托盘，可直接从右键菜单切换网络。
 - 提供操作详情、诊断信息复制、日志查看和日志清理。
 - 支持手动检查 GitHub Release，并下载、校验和安装新版本。
@@ -62,6 +66,14 @@ NetSwitcher 是一款面向 Windows 的轻量网络出口切换工具，用于�
 启用“切换时禁用另一张网卡”后，程序会进入隔离模式。该模式更彻底，但切换期间可能出现短暂断网。
 
 如果不再需要程序管理网络优先级，可以点击“恢复系统默认”，重新启用所选网卡并恢复 Windows 自动跃点数。
+
+### 固定 IP 配置
+
+打开主界面的“IP 配置”页，点击“新增配置”，选择目标网卡并填写 IPv4 地址和子网掩码。默认网关、DNS 和静态路由均可留空；仅连接同一交换机或访问同网段设备时通常不需要默认网关。
+
+保存后可在主界面点击“应用此配置”，也可以从托盘菜单快速应用标记为快捷项的配置。应用固定 IP 不会改变现有的有线/Wi-Fi 出口优先级。
+
+不再使用固定 IP 时，先选中对应配置，再点击独立的“恢复自动获取（DHCP）”按钮。程序会将该网卡的 IP 和 DNS 恢复为自动获取。
 
 ## 软件更新
 
@@ -134,7 +146,7 @@ artifacts\portable\NetSwitcher.exe
 或者指定版本号：
 
 ```powershell
-.\build-msi.ps1 -Version 1.1.1
+.\build-msi.ps1 -Version 1.2.0
 ```
 
 ## GitHub Actions 自动发布
@@ -146,19 +158,19 @@ artifacts\portable\NetSwitcher.exe
 
 发布前，需要先把 `NetSwitcher.csproj` 中的 `Version` 改为新版本，并提交代码。Git 标签中的版本号必须与项目版本完全一致。
 
-例如发布 `1.1.1`：
+例如发布 `1.2.0`：
 
 ```powershell
-git tag v1.1.1
+git tag v1.2.0
 git push origin main
-git push origin v1.1.1
+git push origin v1.2.0
 ```
 
 Release 会包含：
 
 ```text
-NetSwitcher-Setup-1.1.1-x64.msi
-NetSwitcher-Portable-1.1.1-x64.exe
+NetSwitcher-Setup-1.2.0-x64.msi
+NetSwitcher-Portable-1.2.0-x64.exe
 SHA256SUMS.txt
 ```
 
